@@ -1,134 +1,431 @@
 package com.helptech.abraham.ui.theme
 
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import coil.compose.AsyncImage
 import com.google.gson.Gson
+import com.google.gson.JsonElement
 import com.google.gson.reflect.TypeToken
 import com.helptech.abraham.BuildConfig
 import com.helptech.abraham.data.remote.AkitemClient
 import com.helptech.abraham.data.remote.ApiEnvelope
+import com.helptech.abraham.data.remote.ItemPedidoReq
 import com.helptech.abraham.data.remote.ProdutoDto
+import com.helptech.abraham.data.remote.enviarPedido as enviarPedidoRemote
+import com.helptech.abraham.network.buscarFotoPrincipal
 import com.helptech.abraham.settings.AppSettings
 import com.helptech.abraham.settings.DeviceRole
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+
+// ===== Cores iguais ao Menu (tema laranja) =====
+private val Orange     = Color(0xFFF57C00)
+private val MenuBg     = Color(0xFF2B2F33)
+private val PanelBg    = Color(0xFF1F2226)
+private val CardBg     = Color(0xFF24262B)
+private val Muted      = Color(0xFFB8BEC6)
+private val DividerClr = Color(0x33222222)
+
+private enum class Screen { MENU, CART }
 
 @Composable
 fun ApiPlayground() {
     val ctx = LocalContext.current
 
-    // Observa o tipo de dispositivo (MESA/BALCÃO) e o número da mesa
+    // MESA/BALCÃO
     val role by AppSettings.observeRole(ctx).collectAsState(initial = DeviceRole.MESA.name)
     val tableNumber by AppSettings.observeTable(ctx).collectAsState(initial = 1)
     val mesaLabel = if (role == DeviceRole.BALCAO.name) "BALCÃO" else "MESA $tableNumber"
 
-    // Estados de dados
+    // Estado
     var produtos by remember { mutableStateOf<List<ProdutoDto>>(emptyList()) }
-    var mostrarMenu by remember { mutableStateOf(false) }
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf<String?>(null) }
+    var screen by remember { mutableStateOf(Screen.MENU) }
 
-    // Carrinho em memória
-    val cart = remember { mutableStateMapOf<Int, Int>() }
-    val cartCount by derivedStateOf { cart.values.sum() }
-    var cartOpen by remember { mutableStateOf(false) }
+    // Carrinho
+    val cart = remember { mutableStateMapOf<Int, Int>() } // codigo -> qtde
+    val cartCount by remember { derivedStateOf { cart.values.sum() } }
 
-    // Carrega automaticamente na primeira composição
-    LaunchedEffect(Unit) {
+    // Feedback de envio
+    val scope = rememberCoroutineScope()
+    var submitting by remember { mutableStateOf(false) }
+    var statusMsg by remember { mutableStateOf<String?>(null) }
+
+    var reloadKey by remember { mutableStateOf(0) }
+
+    // Carrega produtos
+    LaunchedEffect(reloadKey) {
         val body = mapOf(
             "item_adicional" to "",
             "n_categoria_codigo" to "",
             "codigo" to "",
             "codigo_empresa" to "",
-            "ativo" to "",
-            "imagem" to "base64"
+            "ativo" to "S"
         )
-        runCatching {
-            AkitemClient.api.call(
-                empresa = BuildConfig.API_EMPRESA,
-                modulo = "produto",
-                funcao = "consultar",
-                body = body
-            )
-        }.onSuccess { env: ApiEnvelope ->
-            if (env.erro != null) {
-                error = env.erro
-            } else {
-                val listType = object : TypeToken<List<ProdutoDto>>() {}.type
-                produtos = Gson().fromJson(env.sucesso, listType) ?: emptyList()
-                mostrarMenu = true
+        loading = true
+        error = null
+
+        val env: ApiEnvelope = runCatching {
+            withContext(Dispatchers.IO) {
+                AkitemClient.api.call(
+                    empresa = BuildConfig.API_EMPRESA,
+                    modulo = "produto",
+                    funcao = "consultar",
+                    body = body
+                )
             }
         }.onFailure { e ->
             error = e.message ?: "Falha desconhecida"
+            loading = false
+        }.getOrElse { return@LaunchedEffect }
+
+        env.erro?.let {
+            error = it
+            loading = false
+            return@LaunchedEffect
         }
+
+        val listType = object : TypeToken<List<ProdutoDto>>() {}.type
+        val todos: List<ProdutoDto> = withContext(Dispatchers.Default) {
+            Gson().fromJson(env.sucesso, listType) ?: emptyList()
+        }
+        val apenasProdutos = withContext(Dispatchers.Default) {
+            todos.filter { it.tipo.equals("PRODUTO", true) || it.tipo.equals("PIZZA", true) }
+        }
+
+        produtos = apenasProdutos
         loading = false
     }
 
-    when {
-        mostrarMenu -> {
-            RestaurantMenuScreen(
-                produtos = produtos,
-                onAddToCart = { p -> cart[p.codigo] = (cart[p.codigo] ?: 0) + 1 },
-                mesaLabel = mesaLabel,
-                cartCount = cartCount,
-                onCartClick = { cartOpen = true }
-            )
-
-            if (cartOpen) {
-                val itens = produtos.filter { cart.containsKey(it.codigo) }
-                    .map { it to (cart[it.codigo] ?: 0) }
-                    .filter { it.second > 0 }
-
-                CartBottomSheet(
-                    itens = itens,
-                    onAdd = { p -> cart[p.codigo] = (cart[p.codigo] ?: 0) + 1 },
-                    onRemove = { p ->
-                        val q = (cart[p.codigo] ?: 0) - 1
-                        if (q <= 0) cart.remove(p.codigo) else cart[p.codigo] = q
-                    },
-                    onClose = { cartOpen = false },
-                    onCheckout = {
-                        // TODO: montar JSON e enviar pedido
-                        cartOpen = false
-                    }
-                )
-            }
-        }
-
-        loading -> {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+    // UI
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MenuBg)
+    ) {
+        when {
+            loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator()
             }
-        }
 
-        else -> {
-            // Estado de erro (quando a chamada falha)
-            Column(
+            error != null -> Column(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(24.dp),
                 verticalArrangement = Arrangement.Center,
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Text(
-                    text = error ?: "Sem dados",
-                    color = MaterialTheme.colorScheme.error
-                )
+                Text(text = error ?: "Sem dados", color = MaterialTheme.colorScheme.error)
                 Spacer(Modifier.height(12.dp))
-                Button(onClick = {
-                    // força um novo carregamento
-                    error = null
-                    loading = true
-                    mostrarMenu = false
-                    // reexecuta o LaunchedEffect alterando a chave
-                    // (tática simples: mudar um state "reloadKey")
-                }) {
-                    Text("Tentar novamente")
+                Button(onClick = { reloadKey++ }) { Text("Tentar novamente") }
+            }
+
+            else -> when (screen) {
+                Screen.MENU -> {
+                    RestaurantMenuColumnsScreen(
+                        produtos = produtos,
+                        onAddToCart = { p: ProdutoDto -> cart[p.codigo] = (cart[p.codigo] ?: 0) + 1 },
+                        mesaLabel = mesaLabel,
+                        cartCount = cartCount,
+                        onCartClick = { screen = Screen.CART }
+                    )
+                }
+
+                Screen.CART -> {
+                    val itens = remember(produtos, cart.toMap()) {
+                        produtos.filter { cart.containsKey(it.codigo) }
+                            .map { it to (cart[it.codigo] ?: 0) }
+                            .filter { it.second > 0 }
+                    }
+
+                    CartPage(
+                        itens = itens,
+                        onAdd = { p -> cart[p.codigo] = (cart[p.codigo] ?: 0) + 1 },
+                        onRemove = { p ->
+                            val q = (cart[p.codigo] ?: 0) - 1
+                            if (q <= 0) cart.remove(p.codigo) else cart[p.codigo] = q
+                        },
+                        onBack = { screen = Screen.MENU },
+                        onConfirm = {
+                            if (itens.isEmpty()) return@CartPage
+                            scope.launch {
+                                submitting = true
+                                val itensReq = itens.map { (p, q) ->
+                                    ItemPedidoReq(
+                                        codigoProduto = p.codigo,
+                                        quantidade   = q,
+                                        valorUnit    = p.valor ?: 0.0
+                                    )
+                                }
+                                val result = enviarPedidoRemote(
+                                    mesaLabel = mesaLabel,
+                                    itens = itensReq,
+                                    // 2 = BALCÃO (conforme exemplos). Se o cliente passar outro código para "mesa",
+                                    // é só ajustar aqui.
+                                    tipoEntregaCodigo = "2",
+                                    // 1 = Dinheiro (ajuste se precisar)
+                                    formaPgtoCodigo = "1",
+                                    obsPedido = ""
+                                )
+
+                                result
+                                    .onSuccess { el: JsonElement? ->
+                                        val pedidoId = when {
+                                            el == null -> null
+                                            el.isJsonPrimitive -> el.asString
+                                            el.isJsonObject && el.asJsonObject.has("codigo") ->
+                                                el.asJsonObject.get("codigo").asString
+                                            else -> null
+                                        }
+                                        statusMsg = if (pedidoId.isNullOrBlank())
+                                            "Pedido enviado com sucesso!"
+                                        else
+                                            "Pedido enviado com sucesso! Nº: $pedidoId"
+
+                                        cart.clear()
+                                        screen = Screen.MENU
+                                    }
+                                    .onFailure { e ->
+                                        statusMsg = "Falha ao enviar pedido: ${e.message ?: "erro desconhecido"}"
+                                    }
+
+                                submitting = false
+                            }
+                        }
+                    )
+
+                    if (submitting) {
+                        Box(
+                            Modifier
+                                .fillMaxSize()
+                                .background(Color(0x66000000)),
+                            contentAlignment = Alignment.Center
+                        ) { CircularProgressIndicator() }
+                    }
                 }
             }
         }
     }
+
+    if (statusMsg != null) {
+        AlertDialog(
+            onDismissRequest = { statusMsg = null },
+            confirmButton = { TextButton(onClick = { statusMsg = null }) { Text("OK") } },
+            title = { Text("Status do pedido") },
+            text = { Text(statusMsg ?: "") }
+        )
+    }
+}
+
+/* ---------- Carrinho (full-screen) com tema laranja + fotos ---------- */
+
+@Composable
+private fun CartPage(
+    itens: List<Pair<ProdutoDto, Int>>,
+    onAdd: (ProdutoDto) -> Unit,
+    onRemove: (ProdutoDto) -> Unit,
+    onBack: () -> Unit,
+    onConfirm: () -> Unit
+) {
+    val total = itens.sumOf { (p, q) -> (p.valor ?: 0.0) * q }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(PanelBg)
+            .padding(16.dp)
+    ) {
+        // Cabeçalho
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text("Seu carrinho", color = Color.White, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            TextButton(onClick = onBack, colors = ButtonDefaults.textButtonColors(contentColor = Orange)) {
+                Text("Voltar")
+            }
+        }
+        Divider(color = DividerClr)
+        Spacer(Modifier.height(12.dp))
+
+        if (itens.isEmpty()) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text("Seu carrinho está vazio.", color = Muted)
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                items(itens, key = { it.first.codigo }) { (p, q) ->
+                    CartRowOrange(
+                        produto = p,
+                        quantidade = q,
+                        onAdd = { onAdd(p) },
+                        onRemove = { onRemove(p) }
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(12.dp))
+            Divider(color = DividerClr)
+            Spacer(Modifier.height(8.dp))
+
+            // Total
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Total", color = Muted, fontWeight = FontWeight.SemiBold)
+                Text(formatMoneyLocal(total), color = Color.White, fontWeight = FontWeight.ExtraBold)
+            }
+
+            Spacer(Modifier.height(12.dp))
+            Button(
+                onClick = onConfirm,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp),
+                enabled = itens.isNotEmpty(),
+                colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Color.White),
+                shape = MaterialTheme.shapes.large
+            ) { Text("Confirmar pedido", fontWeight = FontWeight.SemiBold) }
+        }
+    }
+}
+
+@Composable
+private fun CartRowOrange(
+    produto: ProdutoDto,
+    quantidade: Int,
+    onAdd: () -> Unit,
+    onRemove: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(MaterialTheme.shapes.medium)
+            .background(CardBg)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // Foto (igual ao menu)
+        Box(
+            modifier = Modifier
+                .size(48.dp)
+                .clip(MaterialTheme.shapes.small)
+                .background(Color(0xFF343A40)),
+            contentAlignment = Alignment.Center
+        ) {
+            var fotoUrl by remember(produto.codigo) { mutableStateOf<String?>(null) }
+            LaunchedEffect(produto.codigo) {
+                fotoUrl = try { buscarFotoPrincipal(produto.codigo) } catch (_: Exception) { null }
+            }
+
+            val fotoOrig = produto.foto
+            val isUrlOrig = !fotoOrig.isNullOrBlank() &&
+                    (fotoOrig.startsWith("http", true) || fotoOrig.startsWith("https", true))
+
+            when {
+                !fotoUrl.isNullOrBlank() -> AsyncImage(
+                    model = fotoUrl, contentDescription = null,
+                    modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop
+                )
+                isUrlOrig -> AsyncImage(
+                    model = fotoOrig, contentDescription = null,
+                    modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop
+                )
+                !fotoOrig.isNullOrBlank() -> {
+                    val img = base64ToImageBitmapOrNull(fotoOrig)
+                    if (img != null) {
+                        Image(bitmap = img, contentDescription = null,
+                            modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                    }
+                }
+            }
+        }
+
+        Spacer(Modifier.width(10.dp))
+
+        Column(modifier = Modifier.weight(1f)) {
+            Text(produto.nome, color = Color.White, fontWeight = FontWeight.SemiBold, maxLines = 1)
+            Text("Unitário: ${formatMoneyLocal(produto.valor)}", color = Muted, style = MaterialTheme.typography.bodySmall)
+        }
+
+        Stepper(
+            value = quantidade,
+            onMinus = onRemove,
+            onPlus  = onAdd
+        )
+
+        Spacer(Modifier.width(12.dp))
+
+        Text(
+            formatMoneyLocal((produto.valor ?: 0.0) * quantidade),
+            color = Orange,
+            fontWeight = FontWeight.Black
+        )
+    }
+}
+
+@Composable
+private fun Stepper(
+    value: Int,
+    onMinus: () -> Unit,
+    onPlus: () -> Unit
+) {
+    Surface(
+        shape = CircleShape,
+        color = Color.Transparent,
+        border = BorderStroke(1.dp, Orange)
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.height(34.dp)
+        ) {
+            IconButton(onClick = onMinus, modifier = Modifier.size(34.dp)) {
+                Icon(Icons.Filled.Remove, contentDescription = "Diminuir", tint = Color.White)
+            }
+            Text(
+                text = value.toString(),
+                color = Color.White,
+                modifier = Modifier.widthIn(min = 24.dp)
+            )
+            IconButton(onClick = onPlus, modifier = Modifier.size(34.dp)) {
+                Icon(Icons.Filled.Add, contentDescription = "Aumentar", tint = Color.White)
+            }
+        }
+    }
+}
+
+/* ---------- Helpers ---------- */
+
+private fun formatMoneyLocal(valor: Double?): String {
+    val v = valor ?: 0.0
+    return "R$ " + "%,.2f".format(v)
+        .replace(',', 'X').replace('.', ',').replace('X', '.')
 }

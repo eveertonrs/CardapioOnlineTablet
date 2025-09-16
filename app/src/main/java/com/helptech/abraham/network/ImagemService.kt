@@ -1,41 +1,129 @@
 package com.helptech.abraham.network
 
+import com.google.gson.JsonElement
+import com.google.gson.JsonObject
+import com.helptech.abraham.BuildConfig
+import com.helptech.abraham.data.remote.AkitemClient
+import com.helptech.abraham.data.remote.ApiEnvelope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentHashMap
 
 private const val IMG_HOST = "https://tolon.com.br/"
 
-// cache simples em memória (evita chamar toda hora ao rolar a lista)
-private val imagemCache = ConcurrentHashMap<Int, String?>()
+/**
+ * Cache em memória. Usamos String não-nula:
+ * - URL válida = string com valor
+ * - "miss" (sem imagem encontrada) = string vazia ""
+ */
+private val imagemCache = ConcurrentHashMap<Int, String>()
 
-/** Normaliza a resposta do backend para um path/URL utilizável */
-private fun extractImgPath(raw: String): String? {
-    val trimmed = raw.trim().removePrefix("\uFEFF") // remove BOM se vier
-    val unescaped = trimmed.replace("\\/", "/")
-    // Caso venha como <img src="...">
-    val src = Regex("""src\s*=\s*["']([^"']+)["']""").find(unescaped)?.groupValues?.get(1)
-    val path = src ?: unescaped.trim('"')
-    return path.takeIf { it.contains("arquivos/") || it.startsWith("http", true) }
-}
-
-/** Monta URL absoluta se só vier o path */
+/** Converte path ou URL parcial em URL absoluta. */
 private fun toAbsoluteUrl(pathOrUrl: String): String {
-    return if (pathOrUrl.startsWith("http", true)) pathOrUrl
-    else IMG_HOST + pathOrUrl.removePrefix("/")
+    val p = pathOrUrl.trim()
+    return if (p.startsWith("http", ignoreCase = true)) p
+    else IMG_HOST + p.removePrefix("/")
 }
 
-/** Chama o endpoint e devolve a URL da foto principal do produto */
-suspend fun buscarFotoPrincipal(produtoCodigo: Int): String? = withContext(Dispatchers.IO) {
-    // usa cache primeiro
-    imagemCache[produtoCodigo]?.let { return@withContext it }
+/** Procura um campo de URL de imagem em um objeto arbitrário. */
+private fun extractUrlFromImageObj(obj: JsonObject): String? {
+    // nomes mais comuns que já vimos
+    val candidates = listOf("urlFoto", "url", "foto", "image", "path")
+    for (k in candidates) {
+        if (obj.has(k)) {
+            val v = obj.get(k)
+            if (v != null && !v.isJsonNull) {
+                val s = v.asString.trim()
+                if (s.isNotEmpty()) return s
+            }
+        }
+    }
+    return null
+}
 
-    val api = TolonApiClient.api
-    val body = RetornaProdutoAnexoBody(produtosCodigo = produtoCodigo.toString())
-    val raw = api.retornaProdutoAnexo(body = body)
-    val path = extractImgPath(raw)
-    val url = path?.let(::toAbsoluteUrl)
+/**
+ * Lê o JsonElement retornado em "sucesso" e tenta achar a URL principal:
+ * - sucesso pode ser array de produtos, ou um único objeto de produto.
+ * - produto.imagens é um array de objetos com urlFoto e "principal" = "S".
+ */
+private fun findPrincipalUrlFromSuccess(sucesso: JsonElement): String? {
+    val productObj: JsonObject = when {
+        sucesso.isJsonArray && sucesso.asJsonArray.size() > 0 ->
+            sucesso.asJsonArray[0].asJsonObject
+        sucesso.isJsonObject -> sucesso.asJsonObject
+        else -> return null
+    }
 
-    imagemCache[produtoCodigo] = url
-    return@withContext url
+    // Se houver "imagens", preferimos a principal
+    if (productObj.has("imagens") && productObj.get("imagens").isJsonArray) {
+        val arr = productObj.getAsJsonArray("imagens")
+
+        // 1) principal = "S"
+        for (el in arr) {
+            if (!el.isJsonObject) continue
+            val obj = el.asJsonObject
+            val principal = obj.get("principal")?.asString?.equals("S", true) == true
+            if (principal) return extractUrlFromImageObj(obj)
+        }
+
+        // 2) primeira imagem
+        if (arr.size() > 0 && arr[0].isJsonObject) {
+            extractUrlFromImageObj(arr[0].asJsonObject)?.let { return it }
+        }
+    }
+
+    // Fallbacks ocasionais: alguns retornos colocam url direto no produto
+    extractUrlFromImageObj(productObj)?.let { return it }
+
+    return null
+}
+
+/**
+ * Busca a foto principal de um produto.
+ * Estratégia:
+ *  - Usa cache ("" = sem imagem).
+ *  - Chama módulo "produto" função "consultar" só para esse código.
+ *  - Extrai "imagens[].urlFoto" (principal "S" ou primeira).
+ *  - Normaliza para URL absoluta.
+ */
+suspend fun buscarFotoPrincipal(codigoProduto: Int): String? = withContext(Dispatchers.IO) {
+    // Cache ("" significa "não tem imagem"; evita requisições repetidas)
+    imagemCache[codigoProduto]?.let { cached ->
+        return@withContext cached.ifBlank { null }
+    }
+
+    // Body mínimo; manter chaves conhecidas evita respostas diferentes
+    val body = mapOf(
+        "item_adicional" to "",
+        "n_categoria_codigo" to "",
+        "codigo" to codigoProduto.toString(),
+        "codigo_empresa" to "",
+        "ativo" to "",
+        // não precisamos de base64 aqui; queremos só as URLs
+        "imagem" to ""
+    )
+
+    val env: ApiEnvelope = runCatching {
+        AkitemClient.api.call(
+            empresa = BuildConfig.API_EMPRESA,
+            modulo = "produto",
+            funcao = "consultar",
+            body = body
+        )
+    }.getOrElse {
+        imagemCache[codigoProduto] = "" // marca miss para não insistir
+        return@withContext null
+    }
+
+    if (env.erro != null) {
+        imagemCache[codigoProduto] = ""
+        return@withContext null
+    }
+
+    val urlPath = env.sucesso?.let { findPrincipalUrlFromSuccess(it) }
+    val finalUrl = urlPath?.let { toAbsoluteUrl(it) } ?: ""
+
+    // IMPORTANTE: ConcurrentHashMap não aceita null -> guardamos "" para miss
+    imagemCache[codigoProduto] = finalUrl
+    return@withContext finalUrl.ifBlank { null }
 }
