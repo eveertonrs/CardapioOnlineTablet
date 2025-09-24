@@ -17,6 +17,10 @@ data class ApiEnvelope(
     @SerializedName("erro")    val erro: String? = null
 )
 
+/* -------------------------------------------------------------------------- */
+/*                                PRODUTOS                                    */
+/* -------------------------------------------------------------------------- */
+
 /**
  * Modelo de produto retornado pela API.
  * Observações:
@@ -29,24 +33,95 @@ data class ProdutoDto(
     val tipo: String?,
     val nome: String,
     val descricao: String?,
-
-    @JsonAdapter(DoubleOrNullAdapter::class)
+    val sub_nome: String?,
+    val cor_sub_nome: String?,
     val valor: Double?,
-
-    @JsonAdapter(DoubleOrNullAdapter::class)
-    val estoque: Double?,
-
+    val valor_original: Double?,
+    val estoque: Int?,
+    val limitar_estoque: String?,
+    val fracao: String?,
+    val item_adicional_obrigar: String?,
+    val adicional_juncao: String?,
+    val item_adicional_multi: String?,
+    val adicional_qtde_min: Int?,
+    val adicional_qtde_max: Int?,
+    val codigo_empresa: String?,
+    val codigo_barras: String?,
+    val codigo_barras_padrao: String?,
+    val usu_alt: String?,
+    val dta_alteracao: String?,
     val ativo: String?,
+    val qtde_min_pedido: Int?,
+    val incremento_qtde: Int?,
+    val ordem: Int?,
+    val limite_adicao: Int?,
+    val pizza_qtde_sabor: Int?,
+    val editavel: String?,
+    val vis_online: String?,
+    val pdv_obs: String?,
+    val valor_custo: String?,
     val categoria_nome: String?,
-
-    // A API pode usar várias chaves para foto; mapeamos todas.
-    @SerializedName(value = "foto", alternate = ["imagem", "image", "img", "foto_base64"])
     val foto: String? = null,
+
+    // 👇 ADICIONE ESTA LINHA
+    val adicionais: Any? = null
 )
 
-/* ----------------------------- MODELOS DE PEDIDO ------------------------------ */
+/* -------------------------------------------------------------------------- */
+/*                                ADICIONAIS                                  */
+/* -------------------------------------------------------------------------- */
 
-/** Item usado para enviar o pedido (usa nomes que você já referenciou no código). */
+/** Item de adicional (opção dentro de um grupo). */
+data class AdicionalItemDto(
+    val codigo: Int,
+    val categoria_codigo: Int?,
+    val tipo: String?,                // "ADICIONAL" etc
+    val nome: String,
+    val descricao: String?,
+
+    @JsonAdapter(DoubleOrNullAdapter::class)
+    val valor: Double?,               // algumas respostas usam "valor"
+
+    // Em alguns payloads de pizza vem "valor_ad" por item:
+    @SerializedName("valor_ad")
+    @JsonAdapter(DoubleOrNullAdapter::class)
+    val valorAd: Double? = null,
+
+    val ativo: String?,
+    val categoria_nome: String? = null
+)
+
+/** Grupo de adicionais de um produto (ex.: "Escolha seu sabor!", "Quantos Copos?"). */
+data class AdicionalGrupoDto(
+    val codigo: Int,
+    val produtos_codigo: Int?,
+    val nome: String,
+
+    // Regras:
+    val adicional_qtde_min: Int? = null,
+    val adicional_qtde_max: Int? = null,
+    val adicional_juncao: String? = null,   // "SOMA", "MEDIA"...
+
+    // Pizzas:
+    val sabor_pizza: String? = null,        // "S" | "N"
+
+    // Ordenações/opções extras podem vir:
+    val ordem: Int? = null,
+    val descricao: String? = null,
+
+    // Lista de opções:
+    val adicionais: List<AdicionalItemDto> = emptyList()
+)
+
+/* -------------------------------------------------------------------------- */
+/*                                 PEDIDO                                     */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Item usado para enviar o pedido.
+ * ⚠️ Nomes em estilo Kotlin (sem snake_case). Quem monta o JSON final
+ * para a API converte esses campos para as chaves esperadas.
+ */
 /*data class ItemPedidoReq(
     val codigoProduto: Int,
     val quantidade: Int,
@@ -58,7 +133,9 @@ data class PedidoCriadoResp(
     val codigo: String? = null
 )
 
-/* ----------------------------- ADAPTERS ------------------------------ */
+/* -------------------------------------------------------------------------- */
+/*                                ADAPTERS                                    */
+/* -------------------------------------------------------------------------- */
 
 /**
  * Aceita número (12, 12.5) ou string ("12", "12,50") e devolve Double?.
@@ -90,7 +167,9 @@ class DoubleOrNullAdapter : JsonDeserializer<Double?> {
     }
 }
 
-/* ----------------------------- HELPERS ------------------------------- */
+/* -------------------------------------------------------------------------- */
+/*                                HELPERS                                     */
+/* -------------------------------------------------------------------------- */
 
 /** Conveniência: produto ativo quando campo "ativo" == "S" (case-insensitive). */
 val ProdutoDto.isAtivo: Boolean
