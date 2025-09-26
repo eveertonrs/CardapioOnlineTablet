@@ -23,6 +23,9 @@ import com.helptech.abraham.data.remote.ProdutoDto
 import com.helptech.abraham.network.buscarFotoPrincipal
 import kotlinx.coroutines.launch
 
+// >>> IMPORTA O EXTENSION 'preco' (fallback valor/valor_ad)
+import com.helptech.abraham.data.remote.preco
+
 /** Retorno do sheet: quantidade e as opções escolhidas por grupo. */
 data class ProdutoEscolhido(
     val quantidade: Int,
@@ -61,8 +64,9 @@ fun ProductDetailSheet(
         fotoUrl = try { buscarFotoPrincipal(produto.codigo) } catch (_: Exception) { null }
     }
 
+    // >>> usa 'preco' para somar corretamente (valor != 0 senão valor_ad)
     val adicionalUnit by remember(grupos, escolhas) {
-        derivedStateOf { escolhas.values.flatten().sumOf { it.valor ?: it.valorAd ?: 0.0 } }
+        derivedStateOf { escolhas.values.flatten().sumOf { it.preco } }
     }
     val precoUnit = (produto.valor ?: 0.0) + adicionalUnit
     val total = precoUnit * quantidade
@@ -81,12 +85,10 @@ fun ProductDetailSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         dragHandle = { BottomSheetDefaults.DragHandle() },
-        // >>> Deixa o sheet claro e o scrim mais forte
         containerColor = Color.White,
         contentColor = Color(0xFF111111),
         scrimColor = Color(0x99000000)
     ) {
-        // padding para não colar nas bordas e não ficar atrás da barra de navegação
         Column(
             Modifier
                 .fillMaxWidth()
@@ -133,12 +135,11 @@ fun ProductDetailSheet(
             Spacer(Modifier.height(8.dp))
 
             if (grupos.isNotEmpty()) {
-                // limita a altura pra nunca ficar escondido atrás do botão
                 LazyColumn(
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(max = 520.dp) // ajuste fino se precisar
+                        .heightIn(max = 520.dp)
                 ) {
                     items(grupos, key = { (it.grupo ?: "Adicionais") + "|" + it.hashCode() }) { g ->
                         val idx = grupos.indexOf(g)
@@ -207,7 +208,6 @@ private fun GrupoAdicionalCard(
 
     val tituloGrupo = grupo.grupo?.takeIf { it.isNotBlank() } ?: "Adicionais"
 
-    // Cartão claro para legibilidade
     Surface(
         color = Color(0xFFF5F6F8),
         contentColor = Color(0xFF111111),
@@ -218,28 +218,24 @@ private fun GrupoAdicionalCard(
         Column(Modifier.padding(12.dp)) {
             val sub = buildString {
                 if (obrigatorio) append("Obrigatório")
-                if (max > 0) {
-                    if (isNotEmpty()) append(" • "); append("Até $max")
-                }
+                if (max > 0) { if (isNotEmpty()) append(" • "); append("Até $max") }
             }
             Text(
                 text = tituloGrupo,
                 style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
             )
             if (sub.isNotEmpty()) {
-                Text(
-                    text = sub,
-                    color = Color(0xFF5F6368),
-                    style = MaterialTheme.typography.bodySmall
-                )
+                Text(text = sub, color = Color(0xFF5F6368), style = MaterialTheme.typography.bodySmall)
             }
             Spacer(Modifier.height(8.dp))
 
             opcoes.forEach { op ->
                 val checked = selecionadas.any { it.codigo == op.codigo }
                 val nomeOpc = op.nome?.ifBlank { "Opção" } ?: "Opção"
-                val precoOpc = op.valor ?: op.valorAd
-                val titulo = if (precoOpc != null) {
+
+                // >>> usa 'preco' para decidir exibição do (+ R$)
+                val precoOpc = op.preco
+                val titulo = if (precoOpc > 0.0) {
                     "$nomeOpc  (+ ${formatMoneyUi(precoOpc)})"
                 } else nomeOpc
 

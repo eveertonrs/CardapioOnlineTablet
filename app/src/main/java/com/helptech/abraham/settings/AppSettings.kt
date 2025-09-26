@@ -21,33 +21,54 @@ object AppSettings {
     private val KEY_ROLE  = stringPreferencesKey("role")
     private val KEY_TABLE = intPreferencesKey("table")
 
-    /** Salva como MESA (com número) */
-    suspend fun saveMesa(ctx: Context, numeroMesa: Int) {
+    /* ===================== Gravação ===================== */
+
+    /** Define o papel explicitamente. */
+    suspend fun setRole(ctx: Context, role: DeviceRole) {
         ctx.dataStore.edit { p ->
-            p[KEY_ROLE]  = DeviceRole.MESA.name
-            p[KEY_TABLE] = numeroMesa
+            p[KEY_ROLE] = role.name
+            // Se virar BALCÃO, removemos mesa
+            if (role == DeviceRole.BALCAO) p.remove(KEY_TABLE)
         }
     }
 
-    /** Salva como BALCÃO (sem mesa) */
-    suspend fun saveBalcao(ctx: Context) {
+    /** Ajusta o número da mesa (e garante que o papel seja MESA). */
+    suspend fun setTable(ctx: Context, numeroMesa: Int) {
+        val mesa = numeroMesa.coerceIn(1, 999)
         ctx.dataStore.edit { p ->
-            p[KEY_ROLE] = DeviceRole.BALCAO.name
-            p.remove(KEY_TABLE)
+            p[KEY_ROLE] = DeviceRole.MESA.name
+            p[KEY_TABLE] = mesa
         }
     }
 
-    /** Observa o papel (MESA/BALCAO) em tempo real */
-    fun observeRole(ctx: Context): Flow<DeviceRole?> =
+    /** Atalhos compatíveis com o que você já tinha. */
+    suspend fun saveMesa(ctx: Context, numeroMesa: Int) = setTable(ctx, numeroMesa)
+    suspend fun saveBalcao(ctx: Context) = setRole(ctx, DeviceRole.BALCAO)
+
+    /* ===================== Observação ===================== */
+
+    /** Observa o papel como *String* (nome do enum) — sempre não-nulo. */
+    fun observeRole(ctx: Context): Flow<String> =
         ctx.dataStore.data
-            .map { p -> p[KEY_ROLE]?.let { runCatching { DeviceRole.valueOf(it) }.getOrNull() } }
+            .map { p -> p[KEY_ROLE] ?: DeviceRole.MESA.name }
             .distinctUntilChanged()
 
-    /** Observa o número da mesa em tempo real (pode ser null no BALCÃO) */
-    fun observeTable(ctx: Context): Flow<Int?> =
+    /** Observa a mesa como *Int* — sempre não-nulo (default = 1). */
+    fun observeTable(ctx: Context): Flow<Int> =
         ctx.dataStore.data
-            .map { p -> p[KEY_TABLE] }
+            .map { p -> p[KEY_TABLE] ?: 1 }
             .distinctUntilChanged()
+
+    /* ======= Utilidades síncronas (uma vez) ======= */
+
+    suspend fun getRoleOnce(ctx: Context): DeviceRole {
+        val name = ctx.dataStore.data.first()[KEY_ROLE] ?: DeviceRole.MESA.name
+        return runCatching { DeviceRole.valueOf(name) }.getOrDefault(DeviceRole.MESA)
+    }
+
+    suspend fun getTableOnce(ctx: Context): Int {
+        return ctx.dataStore.data.first()[KEY_TABLE] ?: 1
+    }
 
     /** Útil para saber se já foi configurado no primeiro uso */
     suspend fun isConfigured(ctx: Context): Boolean {

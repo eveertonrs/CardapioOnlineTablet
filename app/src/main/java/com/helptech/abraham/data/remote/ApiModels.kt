@@ -18,7 +18,7 @@ data class ApiEnvelope(
 )
 
 /* -------------------------------------------------------------------------- */
-/*                                PRODUTOS                                    */
+/*                                   PRODUTO                                  */
 /* -------------------------------------------------------------------------- */
 
 /**
@@ -35,7 +35,9 @@ data class ProdutoDto(
     val descricao: String?,
     val sub_nome: String?,
     val cor_sub_nome: String?,
+    @JsonAdapter(DoubleOrNullAdapter::class)
     val valor: Double?,
+    @JsonAdapter(DoubleOrNullAdapter::class)
     val valor_original: Double?,
     val estoque: Int?,
     val limitar_estoque: String?,
@@ -63,26 +65,26 @@ data class ProdutoDto(
     val categoria_nome: String?,
     val foto: String? = null,
 
-    // 👇 ADICIONE ESTA LINHA
+    // a API pode devolver um bloco "adicionais" junto do produto
     val adicionais: Any? = null
 )
 
 /* -------------------------------------------------------------------------- */
-/*                                ADICIONAIS                                  */
+/*                                 ADICIONAIS                                 */
 /* -------------------------------------------------------------------------- */
 
 /** Item de adicional (opção dentro de um grupo). */
 data class AdicionalItemDto(
     val codigo: Int,
     val categoria_codigo: Int?,
-    val tipo: String?,                // "ADICIONAL" etc
+    val tipo: String?,                 // "ADICIONAL" etc
     val nome: String,
     val descricao: String?,
 
     @JsonAdapter(DoubleOrNullAdapter::class)
-    val valor: Double?,               // algumas respostas usam "valor"
+    val valor: Double?,                // muitas respostas usam "valor"
 
-    // Em alguns payloads de pizza vem "valor_ad" por item:
+    // Em pizza/outros pode vir o preço nesta tag:
     @SerializedName("valor_ad")
     @JsonAdapter(DoubleOrNullAdapter::class)
     val valorAd: Double? = null,
@@ -91,7 +93,7 @@ data class AdicionalItemDto(
     val categoria_nome: String? = null
 )
 
-/** Grupo de adicionais de um produto (ex.: "Escolha seu sabor!", "Quantos Copos?"). */
+/** Grupo de adicionais de um produto. */
 data class AdicionalGrupoDto(
     val codigo: Int,
     val produtos_codigo: Int?,
@@ -100,12 +102,12 @@ data class AdicionalGrupoDto(
     // Regras:
     val adicional_qtde_min: Int? = null,
     val adicional_qtde_max: Int? = null,
-    val adicional_juncao: String? = null,   // "SOMA", "MEDIA"...
+    val adicional_juncao: String? = null,      // "SOMA", "MEDIA", ...
 
     // Pizzas:
-    val sabor_pizza: String? = null,        // "S" | "N"
+    val sabor_pizza: String? = null,           // "S" | "N"
 
-    // Ordenações/opções extras podem vir:
+    // Extras/ordenação:
     val ordem: Int? = null,
     val descricao: String? = null,
 
@@ -114,27 +116,15 @@ data class AdicionalGrupoDto(
 )
 
 /* -------------------------------------------------------------------------- */
-/*                                 PEDIDO                                     */
+/*                                   PEDIDO                                   */
 /* -------------------------------------------------------------------------- */
 
-/**
- * Item usado para enviar o pedido.
- * ⚠️ Nomes em estilo Kotlin (sem snake_case). Quem monta o JSON final
- * para a API converte esses campos para as chaves esperadas.
- */
-/*data class ItemPedidoReq(
-    val codigoProduto: Int,
-    val quantidade: Int,
-    val valorUnit: Double
-)*/
-
-/** Algumas respostas retornam um objeto com "codigo" do pedido criado. */
 data class PedidoCriadoResp(
     val codigo: String? = null
 )
 
 /* -------------------------------------------------------------------------- */
-/*                                ADAPTERS                                    */
+/*                                  ADAPTERS                                  */
 /* -------------------------------------------------------------------------- */
 
 /**
@@ -148,16 +138,14 @@ class DoubleOrNullAdapter : JsonDeserializer<Double?> {
         context: JsonDeserializationContext?
     ): Double? {
         if (json == null || json.isJsonNull) return null
-
         val prim = json.asJsonPrimitive
         return try {
             when {
                 prim.isNumber -> prim.asNumber.toDouble()
                 prim.isString -> {
                     val s = prim.asString.trim()
-                    if (s.isEmpty() || s.equals("null", ignoreCase = true)) return null
-                    // Troca vírgula por ponto caso venha no formato brasileiro
-                    s.replace(',', '.').toDoubleOrNull()
+                    if (s.isEmpty() || s.equals("null", true)) null
+                    else s.replace(',', '.').toDoubleOrNull()
                 }
                 else -> null
             }
@@ -168,13 +156,37 @@ class DoubleOrNullAdapter : JsonDeserializer<Double?> {
 }
 
 /* -------------------------------------------------------------------------- */
-/*                                HELPERS                                     */
+/*                                  HELPERS                                   */
 /* -------------------------------------------------------------------------- */
 
-/** Conveniência: produto ativo quando campo "ativo" == "S" (case-insensitive). */
+/** Produto ativo quando "ativo" == "S". */
 val ProdutoDto.isAtivo: Boolean
     get() = ativo.equals("S", ignoreCase = true)
 
-/** Preço com fallback para 0.0 quando nulo (útil em cálculos). */
+/** Preço do produto com fallback para 0.0. */
 val ProdutoDto.preco: Double
     get() = valor ?: 0.0
+
+/**
+ * Preço do adicional com fallback:
+ * 1) Se `valor` for != 0, usa `valor`
+ * 2) Senão se existir `valor_ad`, usa `valor_ad`
+ * 3) Senão 0.0
+ */
+val AdicionalItemDto.preco: Double
+    get() = when {
+        (valor ?: 0.0) != 0.0 -> valor ?: 0.0
+        valorAd != null       -> valorAd
+        else                  -> 0.0
+    }
+
+/**
+ * Se o projeto também usa OpcaoAdicionalDto (em ProductDetailSheet, Carrinho, etc),
+ * mantemos a mesma regra de fallback. A classe fica em outro arquivo no mesmo pacote.
+ */
+val OpcaoAdicionalDto.preco: Double
+    get() = when {
+        (valor ?: 0.0) != 0.0 -> valor ?: 0.0
+        valorAd != null       -> valorAd!!
+        else                  -> 0.0
+    }

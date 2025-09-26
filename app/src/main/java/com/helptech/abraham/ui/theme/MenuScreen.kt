@@ -3,25 +3,32 @@ package com.helptech.abraham.ui.theme
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
-import com.helptech.abraham.data.remote.ProdutoDto
 import com.helptech.abraham.data.remote.GrupoAdicionalDto
+import com.helptech.abraham.data.remote.ProdutoDto
 import com.helptech.abraham.network.AdicionaisRepo
 import com.helptech.abraham.network.AdicionaisService
 import com.helptech.abraham.network.buscarFotoPrincipal
@@ -30,10 +37,11 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 
-/* ===== Paleta “laranja” (frames 01/02/03) ===== */
+/* ===== Paleta ===== */
 private val Orange     = Color(0xFFF57C00)
 private val MenuBg     = Color(0xFF2B2F33)
 private val PanelBg    = Color(0xFF1F2226)
@@ -42,14 +50,14 @@ private val Muted      = Color(0xFFB8BEC6)
 private val CardBg     = Color(0xFF24262B)
 private val DividerClr = Color(0x33222222)
 
-/** Itens “achatados” para renderização em uma única LazyColumn */
+/** Itens para a lista seccionada */
 private sealed interface SectionItem {
     data class Header(val categoria: String) : SectionItem
     data class Product(val produto: ProdutoDto) : SectionItem
 }
 
 /* ============================================================
- * HOST: controla abertura do sheet, carrega adicionais (repo/API)
+ * Host (opcional)
  * ============================================================ */
 @Composable
 fun MenuScreenHost(
@@ -64,12 +72,11 @@ fun MenuScreenHost(
     var produtoSel by remember { mutableStateOf<ProdutoDto?>(null) }
     var gruposSel   by remember(produtoSel) { mutableStateOf<List<GrupoAdicionalDto>?>(null) }
 
-    // Tela principal: quando clicar em “Adicionar ao carrinho” abre o sheet
     RestaurantMenuColumnsScreen(
         produtos = produtos,
         onAddToCart = { p ->
             produtoSel = p
-            gruposSel = null // reset — vai carregar abaixo
+            gruposSel = null
         },
         mesaLabel = mesaLabel,
         cartCount = cartCount,
@@ -78,13 +85,9 @@ fun MenuScreenHost(
         onMyBill = onMyBill
     )
 
-    // Sheet e carregamento de adicionais
     produtoSel?.let { p ->
         LaunchedEffect(p.codigo) {
-            // 1) tenta ler do próprio produto
             val locais = AdicionaisRepo.fromProduto(p)
-
-            // 2) se vazio, busca via API (produto/consultar?com_adicionais=S etc.)
             gruposSel = if (locais.isNotEmpty()) locais
             else AdicionaisService.consultarAdicionais(p.codigo)
         }
@@ -109,20 +112,20 @@ fun MenuScreenHost(
     }
 }
 
-/** Tela principal (não abre mais sheet diretamente; quem abre é o host acima) */
+/** Tela principal */
 @Composable
 fun RestaurantMenuColumnsScreen(
     produtos: List<ProdutoDto>,
-    onAddToCart: (ProdutoDto) -> Unit,   // o host usa isso para abrir o sheet
+    onAddToCart: (ProdutoDto) -> Unit,
     mesaLabel: String,
     cartCount: Int,
     onCartClick: () -> Unit,
     onCallWaiter: (() -> Unit)? = null,
-    onMyBill:   (() -> Unit)? = null
+    onMyBill:   (() -> Unit)? = null,
+    onOpenMesaDialog: (() -> Unit)? = null
 ) {
     var search by remember { mutableStateOf("") }
 
-    // Agrupa produtos válidos (PRODUTO / PIZZA). Remove “Adicionais” do rail.
     val agrupados: Map<String, List<ProdutoDto>> = remember(produtos) {
         produtos
             .filter { it.tipo.equals("PRODUTO", true) || it.tipo.equals("PIZZA", true) }
@@ -131,14 +134,11 @@ fun RestaurantMenuColumnsScreen(
     }
 
     val categoriasBase = remember(agrupados) {
-        agrupados.keys
-            .filterNot { it.equals("Adicionais", ignoreCase = true) }
-            .toList()
+        agrupados.keys.filterNot { it.equals("Adicionais", ignoreCase = true) }.toList()
     }
 
     var categoriaSel by remember(categoriasBase) { mutableStateOf(categoriasBase.firstOrNull() ?: "") }
 
-    // Lista achatada (headers + produtos)
     val flatList: List<SectionItem> = remember(agrupados, categoriasBase, search) {
         val cats = categoriasBase
         buildList {
@@ -177,8 +177,7 @@ fun RestaurantMenuColumnsScreen(
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
 
-    // Sincroniza scroll -> rail
-    LaunchedEffect(flatList) {
+    LaunchedEffect(Unit) {
         snapshotFlow { listState.firstVisibleItemIndex }
             .map { firstIdx ->
                 var idx = firstIdx.coerceIn(0, flatList.lastIndex.coerceAtLeast(0))
@@ -190,12 +189,13 @@ fun RestaurantMenuColumnsScreen(
             .collectLatest { cat -> categoriaSel = cat!! }
     }
 
-    // ===== UI =====
     Column(
         modifier = Modifier
             .fillMaxSize()
             .background(MenuBg)
     ) {
+        Spacer(Modifier.height(8.dp))
+
         TopBarOrange(
             mesaLabel = mesaLabel,
             cartCount = cartCount,
@@ -203,13 +203,13 @@ fun RestaurantMenuColumnsScreen(
             search = search,
             onSearchChange = { search = it },
             onMyBill = onMyBill,
-            onCallWaiter = onCallWaiter
+            onCallWaiter = onCallWaiter,
+            onOpenMesaDialog = onOpenMesaDialog
         )
 
         HorizontalDivider(color = DividerClr)
 
         Row(Modifier.fillMaxSize()) {
-            // Rail
             CategoryRail(
                 categorias = categoriasBase,
                 produtosPorCategoria = agrupados,
@@ -222,18 +222,17 @@ fun RestaurantMenuColumnsScreen(
                 }
             )
 
-            // Lista
             SectionedProductList(
                 items = flatList,
                 listState = listState,
-                onAdd = { p -> onAddToCart(p) }, // deixa o host abrir o sheet
+                onAdd = { p -> onAddToCart(p) },
                 modifier = Modifier.weight(1f)
             )
         }
     }
 }
 
-/* ---------- Top bar ---------- */
+/* ---------- Top bar (mais alta) ---------- */
 
 @Composable
 private fun TopBarOrange(
@@ -243,52 +242,45 @@ private fun TopBarOrange(
     search: String,
     onSearchChange: (String) -> Unit,
     onMyBill: (() -> Unit)?,
-    onCallWaiter: (() -> Unit)?
+    onCallWaiter: (() -> Unit)?,
+    onOpenMesaDialog: (() -> Unit)? = null
 ) {
     val focus = LocalFocusManager.current
 
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(Orange)
-            .padding(horizontal = 16.dp, vertical = 12.dp)
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+    Surface(color = Orange) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(64.dp)              // topo mais alto
+                .padding(horizontal = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
             Text(
                 text = mesaLabel,
                 color = Color.White,
                 fontWeight = FontWeight.ExtraBold,
-                fontSize = 18.sp
+                fontSize = 16.sp,
+                modifier = Modifier.pointerInput(Unit) {
+                    detectTapGestures(
+                        onLongPress = { onOpenMesaDialog?.invoke() },
+                        onDoubleTap = { onOpenMesaDialog?.invoke() }
+                    )
+                }
             )
 
-            Spacer(Modifier.width(12.dp))
+            Spacer(Modifier.width(10.dp))
 
-            TextField(
+            SearchField(
                 value = search,
                 onValueChange = onSearchChange,
-                placeholder = { Text("Buscar produto…") },
-                singleLine = true,
-                modifier = Modifier
-                    .height(50.dp)
-                    .weight(1f),
-                colors = TextFieldDefaults.colors(
-                    focusedContainerColor   = Color.White,
-                    unfocusedContainerColor = Color.White,
-                    disabledContainerColor  = Color.White,
-                    focusedIndicatorColor   = Color.Transparent,
-                    unfocusedIndicatorColor = Color.Transparent,
-                    cursorColor             = Color.Black,
-                    focusedTextColor        = Color.Black,
-                    unfocusedTextColor      = Color.Black,
-                    focusedPlaceholderColor = Color(0xFF757575),
-                    unfocusedPlaceholderColor = Color(0xFF9E9E9E),
-                )
+                onSearch = { focus.clearFocus() },
+                modifier = Modifier.weight(1f)
             )
 
-            Spacer(Modifier.width(12.dp))
-            TopChip("MINHA CONTA") { onMyBill?.invoke() }
+            Spacer(Modifier.width(10.dp))
+            TopChip("MINHA CONTA", onMyBill)
             Spacer(Modifier.width(8.dp))
-            TopChip("CHAMAR GARÇOM") { onCallWaiter?.invoke() }
+            TopChip("CHAMAR GARÇOM", onCallWaiter)
             Spacer(Modifier.width(8.dp))
             TopChip("CARRINHO ($cartCount)") {
                 focus.clearFocus()
@@ -299,23 +291,76 @@ private fun TopBarOrange(
 }
 
 @Composable
+private fun SearchField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    onSearch: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    TextField(
+        value = value,
+        onValueChange = onValueChange,
+        placeholder = {
+            Text(
+                "Buscar produto…",
+                maxLines = 1,
+                color = Color(0xFF5A5A5A),
+                fontSize = 16.sp
+            )
+        },
+        singleLine = true,
+        leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null, tint = Color(0xFF5A5A5A)) },
+        textStyle = TextStyle(
+            fontSize = 18.sp,         // maior e sem cortar caudas
+            lineHeight = 24.sp
+        ),
+        keyboardOptions = KeyboardOptions.Default.copy(imeAction = ImeAction.Search),
+        keyboardActions = KeyboardActions(onSearch = { onSearch() }),
+        modifier = modifier
+            .heightIn(min = 56.dp)    // altura padrão confortável
+            .clip(MaterialTheme.shapes.medium),
+        colors = TextFieldDefaults.colors(
+            focusedContainerColor   = Color.White,
+            unfocusedContainerColor = Color.White,
+            disabledContainerColor  = Color.White,
+            focusedIndicatorColor   = Color.Transparent,
+            unfocusedIndicatorColor = Color.Transparent,
+            cursorColor             = Color.Black,
+            focusedTextColor        = Color.Black,
+            unfocusedTextColor      = Color.Black,
+            focusedPlaceholderColor   = Color(0xFF5A5A5A),
+            unfocusedPlaceholderColor = Color(0xFF7C7C7C),
+        )
+    )
+}
+
+/* Chips do topo maiores (inclui CARRINHO) */
+@Composable
 private fun TopChip(text: String, onClick: (() -> Unit)? = null) {
     Surface(
         color = Color(0x26FFFFFF),
         contentColor = Color.White,
         shape = MaterialTheme.shapes.small,
         modifier = Modifier
-            .height(36.dp)
+            .height(36.dp)                // ↑ altura do chip
+            .defaultMinSize(minWidth = 132.dp) // ↑ mais “corpo”, o de Carrinho fica maior
             .clickable(enabled = onClick != null) { onClick?.invoke() }
     ) {
         Box(
-            modifier = Modifier.padding(horizontal = 12.dp),
+            modifier = Modifier.padding(horizontal = 14.dp), // ↑ padding
             contentAlignment = Alignment.Center
-        ) { Text(text, fontSize = 13.sp, fontWeight = FontWeight.SemiBold) }
+        ) {
+            Text(
+                text,
+                fontSize = 14.sp,          // ↑ fonte
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1
+            )
+        }
     }
 }
 
-/* ---------- Rail ---------- */
+/* ---------- Rail / Lista ---------- */
 
 @Composable
 private fun CategoryRail(
@@ -380,7 +425,6 @@ private fun CategoryTile(
             .padding(8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // miniatura (opcional)
         Box(
             modifier = Modifier
                 .size(40.dp)
@@ -421,8 +465,6 @@ private fun CategoryTile(
         )
     }
 }
-
-/* ---------- Lista contínua ---------- */
 
 @Composable
 private fun SectionedProductList(
@@ -471,18 +513,13 @@ private fun ProductRowCompact(
     produto: ProdutoDto,
     onAdd: () -> Unit
 ) {
-    Surface(
-        color = CardBg,
-        shape = MaterialTheme.shapes.large,
-        tonalElevation = 0.dp
-    ) {
+    Surface(color = CardBg, shape = MaterialTheme.shapes.large, tonalElevation = 0.dp) {
         Row(
             Modifier
                 .fillMaxWidth()
                 .padding(10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // imagem mais compacta
             Box(
                 modifier = Modifier
                     .size(140.dp)
@@ -510,8 +547,7 @@ private fun ProductRowCompact(
                         val bmp = base64ToImageBitmapOrNull(f)
                         if (bmp != null) {
                             Image(
-                                bitmap = bmp,
-                                contentDescription = null,
+                                bitmap = bmp, contentDescription = null,
                                 modifier = Modifier.fillMaxSize(),
                                 contentScale = ContentScale.Crop
                             )
@@ -556,7 +592,7 @@ private fun ProductRowCompact(
     }
 }
 
-/* ---------- Utilitários ---------- */
+/* ---------- Utils ---------- */
 
 private fun formatMoneyUi(valor: Double?): String {
     val v = valor ?: 0.0
