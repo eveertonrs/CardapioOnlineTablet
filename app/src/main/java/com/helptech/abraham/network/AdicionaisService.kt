@@ -4,11 +4,7 @@ import android.util.Log
 import com.google.gson.Gson
 import com.google.gson.JsonElement
 import com.google.gson.reflect.TypeToken
-import com.helptech.abraham.BuildConfig
-import com.helptech.abraham.data.remote.AkitemClient
-import com.helptech.abraham.data.remote.ApiEnvelope
-import com.helptech.abraham.data.remote.GrupoAdicionalDto
-import com.helptech.abraham.data.remote.ProdutoComAdicionaisItem
+import com.helptech.abraham.data.remote.*
 
 /**
  * Consulta adicionais tentando 3 variações conhecidas.
@@ -16,8 +12,9 @@ import com.helptech.abraham.data.remote.ProdutoComAdicionaisItem
  */
 object AdicionaisService {
     private const val TAG = "AdicionaisService"
+    private val gson = Gson()
 
-    suspend fun consultarAdicionais(produtoCodigo: Int): List<GrupoAdicionalDto> {
+    suspend fun consultarAdicionais(produtoCodigo: Int): List<AdicionalGrupoDto> {
         // 1) produto/consultarAdicional
         consultar(
             modulo = "produto",
@@ -32,7 +29,7 @@ object AdicionaisService {
             body = mapOf("produto_codigo" to produtoCodigo)
         )?.let { return it }
 
-        // 3) produto/consultar + com_adicionais=S  (seu ambiente respondeu aqui)
+        // 3) produto/consultar + com_adicionais=S
         consultar(
             modulo = "produto",
             funcao = "consultar",
@@ -46,10 +43,10 @@ object AdicionaisService {
         modulo: String,
         funcao: String,
         body: Map<String, Any?>
-    ): List<GrupoAdicionalDto>? {
+    ): List<AdicionalGrupoDto>? {
         return try {
             val env: ApiEnvelope = AkitemClient.api.call(
-                empresa = BuildConfig.API_EMPRESA,
+                empresa = null, // deixa o interceptor definir a empresa do runtime
                 modulo = modulo,
                 funcao = funcao,
                 body = body
@@ -59,7 +56,7 @@ object AdicionaisService {
                 return null
             }
 
-            // produto/consultar => lista de produtos; extrair adicionais do item
+            // produto/consultar => lista de produtos; extrair adicionais do item pedido
             if (modulo == "produto" && funcao == "consultar") {
                 parseProdutoComAdicionais(env.sucesso, (body["codigo"] as? Int) ?: -1)
             } else {
@@ -72,18 +69,17 @@ object AdicionaisService {
     }
 
     /** Caso já seja lista de grupos, ou { "grupos": [...] } / { "adicionais": [...] } */
-    private fun parseGruposDireto(el: JsonElement?): List<GrupoAdicionalDto> {
+    private fun parseGruposDireto(el: JsonElement?): List<AdicionalGrupoDto> {
         if (el == null || el.isJsonNull) return emptyList()
-        val gson = Gson()
-        val listType = object : TypeToken<List<GrupoAdicionalDto>>() {}.type
+        val listType = object : TypeToken<List<AdicionalGrupoDto>>() {}.type
         return try {
             when {
-                el.isJsonArray -> gson.fromJson(el, listType) ?: emptyList()
+                el.isJsonArray -> Gson().fromJson(el, listType) ?: emptyList()
                 el.isJsonObject -> {
                     val obj = el.asJsonObject
                     when {
-                        obj.has("grupos")     -> gson.fromJson(obj.get("grupos"), listType) ?: emptyList()
-                        obj.has("adicionais") -> gson.fromJson(obj.get("adicionais"), listType) ?: emptyList()
+                        obj.has("grupos")     -> Gson().fromJson(obj.get("grupos"), listType) ?: emptyList()
+                        obj.has("adicionais") -> Gson().fromJson(obj.get("adicionais"), listType) ?: emptyList()
                         else -> emptyList()
                     }
                 }
@@ -95,15 +91,14 @@ object AdicionaisService {
     }
 
     /** produto/consultar?com_adicionais=S -> sucesso é lista de produtos; pegar adicionais do código pedido */
-    private fun parseProdutoComAdicionais(el: JsonElement?, codigo: Int): List<GrupoAdicionalDto> {
+    private fun parseProdutoComAdicionais(el: JsonElement?, codigo: Int): List<AdicionalGrupoDto> {
         if (el == null || el.isJsonNull) return emptyList()
-        val gson = Gson()
         val listType = object : TypeToken<List<ProdutoComAdicionaisItem>>() {}.type
         return try {
             val itens: List<ProdutoComAdicionaisItem> = when {
-                el.isJsonArray -> gson.fromJson(el, listType) ?: emptyList()
+                el.isJsonArray -> Gson().fromJson(el, listType) ?: emptyList()
                 el.isJsonObject && el.asJsonObject.has("sucesso") ->
-                    gson.fromJson(el.asJsonObject.get("sucesso"), listType) ?: emptyList()
+                    Gson().fromJson(el.asJsonObject.get("sucesso"), listType) ?: emptyList()
                 else -> emptyList()
             }
             val doProduto = itens.firstOrNull { it.codigo == codigo }

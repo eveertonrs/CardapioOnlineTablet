@@ -1,0 +1,4917 @@
+﻿
+
+==== app\build.gradle.kts ====
+
+plugins {
+    alias(libs.plugins.android.application)
+    alias(libs.plugins.kotlin.android)
+    alias(libs.plugins.kotlin.compose)
+}
+
+android {
+    namespace = "com.helptech.abraham"
+    compileSdk = 35
+
+    defaultConfig {
+        applicationId = "com.helptech.abraham"
+        minSdk = 24
+        targetSdk = 35
+        versionCode = 1
+        versionName = "1.0.0"
+
+        // Base URL no BuildConfig
+        buildConfigField("String", "API_BASE_URL", "\"https://painel.tolon.com.br/\"")
+
+        // Fallback opcional
+        buildConfigField("String", "DEFAULT_EMPRESA", "\"mit\"")
+    }
+
+    buildTypes {
+        debug {
+            isMinifyEnabled = false
+            buildConfigField("String", "API_EMPRESA", "\"mit\"") // <-- coloca o CÃ“DIGO CERTO AQUI
+            buildConfigField("String", "API_USUARIO", "\"\"")
+            buildConfigField("String", "API_TOKEN",   "\"\"")
+        }
+        release {
+            isMinifyEnabled = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+            buildConfigField("String", "API_EMPRESA", "\"mit\"") // idem (ou configura via CI)
+            buildConfigField("String", "API_USUARIO", "\"\"")
+            buildConfigField("String", "API_TOKEN",   "\"\"")
+        }
+    }
+
+
+    buildFeatures {
+        buildConfig = true
+        compose = true
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    packaging {
+        resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
+    }
+}
+
+kotlin {
+    jvmToolchain(17)
+}
+
+dependencies {
+    implementation(platform("androidx.compose:compose-bom:2025.01.00"))
+    implementation(libs.activity.compose)
+    implementation(libs.ui)
+    implementation(libs.material3)
+    implementation(libs.androidx.navigation.compose)
+    implementation(libs.androidx.lifecycle.viewmodel.compose)
+    implementation(libs.androidx.ui.tooling.preview)
+    debugImplementation(libs.androidx.ui.tooling)
+
+    implementation("com.squareup.retrofit2:retrofit:2.11.0")
+    implementation("com.squareup.retrofit2:converter-gson:2.11.0")
+    implementation("com.squareup.retrofit2:converter-scalars:2.11.0")
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
+
+    implementation("androidx.datastore:datastore-preferences:1.1.1")
+
+    implementation(platform("io.coil-kt:coil-bom:2.6.0"))
+    implementation("io.coil-kt:coil-compose")
+
+    implementation("androidx.compose.material:material-icons-extended")
+}
+
+
+
+
+==== app\src\main\AndroidManifest.xml ====
+
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <application
+        android:allowBackup="true"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.AbrahamPedidos">
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:theme="@style/Theme.AbrahamPedidos">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+
+</manifest>
+
+
+
+==== app\src\main\java\com\helptech\abraham\data\remote\AdicionaisModels.kt ====
+
+package com.helptech.abraham.data.remote
+
+import com.google.gson.annotations.SerializedName
+
+/**
+ * Wrappers para o retorno de produto/consultar?com_adicionais=S
+ * MantÃ©m compatibilidade sem redeclarar DTOs jÃ¡ existentes.
+ */
+
+data class ProdutoComAdicionaisEnvelope(
+    val sucesso: List<ProdutoComAdicionaisItem>? = null,
+    val erro: String? = null
+)
+
+data class ProdutoComAdicionaisItem(
+    val codigo: Int,
+    @SerializedName("adicionais")
+    val blocoAdicionais: BlocoAdicionais? = null
+)
+
+data class BlocoAdicionais(
+    val sucesso: List<GrupoAdicionalDto>? = null
+)
+
+
+
+
+==== app\src\main\java\com\helptech\abraham\data\remote\AkitemCliente.kt ====
+
+package com.helptech.abraham.data.remote
+
+import com.helptech.abraham.network.Http
+import retrofit2.http.Body
+import retrofit2.http.Header
+import retrofit2.http.POST
+
+interface AkitemApi {
+    @POST("integracao.php")
+    suspend fun call(
+        @Header("empresa") empresa: String?,
+        @Header("modulo")  modulo: String,
+        @Header("funcao")  funcao: String,
+        @Body body: Any?
+    ): ApiEnvelope
+}
+
+object AkitemClient {
+    val api: AkitemApi by lazy { Http.retrofit.create(AkitemApi::class.java) }
+}
+
+
+
+
+==== app\src\main\java\com\helptech\abraham\data\remote\ApiModels.kt ====
+
+package com.helptech.abraham.data.remote
+
+import com.google.gson.JsonDeserializationContext
+import com.google.gson.JsonDeserializer
+import com.google.gson.JsonElement
+import com.google.gson.annotations.JsonAdapter
+import com.google.gson.annotations.SerializedName
+import java.lang.reflect.Type
+
+/**
+ * Envelope padrÃ£o do Tolon/Akitem:
+ * - "sucesso" pode ser objeto, array, string ou null -> manter como JsonElement
+ * - "erro" vem como string quando a API falha
+ */
+data class ApiEnvelope(
+    @SerializedName("sucesso") val sucesso: JsonElement? = null,
+    @SerializedName("erro")    val erro: String? = null
+)
+
+/* -------------------------------------------------------------------------- */
+/*                                   PRODUTO                                  */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Modelo de produto retornado pela API.
+ * ObservaÃ§Ãµes:
+ * - Campos numÃ©ricos podem vir como string ("12,50") -> usamos adapters tolerantes.
+ * - Mantidos nomes snake_case para compatibilidade com o restante do app.
+ */
+data class ProdutoDto(
+    val codigo: Int,
+    val categoria_codigo: Int?,
+    val tipo: String?,
+    val nome: String,
+    val descricao: String?,
+    val sub_nome: String?,
+    val cor_sub_nome: String?,
+    @JsonAdapter(DoubleOrNullAdapter::class)
+    val valor: Double?,
+    @JsonAdapter(DoubleOrNullAdapter::class)
+    val valor_original: Double?,
+    val estoque: Int?,
+    val limitar_estoque: String?,
+    val fracao: String?,
+    val item_adicional_obrigar: String?,
+    val adicional_juncao: String?,
+    val item_adicional_multi: String?,
+    val adicional_qtde_min: Int?,
+    val adicional_qtde_max: Int?,
+    val codigo_empresa: String?,
+    val codigo_barras: String?,
+    val codigo_barras_padrao: String?,
+    val usu_alt: String?,
+    val dta_alteracao: String?,
+    val ativo: String?,
+    val qtde_min_pedido: Int?,
+    val incremento_qtde: Int?,
+    val ordem: Int?,
+    val limite_adicao: Int?,
+    val pizza_qtde_sabor: Int?,
+    val editavel: String?,
+    val vis_online: String?,
+    val pdv_obs: String?,
+    val valor_custo: String?,
+    val categoria_nome: String?,
+    val foto: String? = null,
+
+    // a API pode devolver um bloco "adicionais" junto do produto (formatos variados)
+    val adicionais: Any? = null
+)
+
+/* -------------------------------------------------------------------------- */
+/*                                 ADICIONAIS                                 */
+/* -------------------------------------------------------------------------- */
+
+/** Item de adicional (opÃ§Ã£o dentro de um grupo). */
+data class AdicionalItemDto(
+    val codigo: Int,
+    val categoria_codigo: Int?,
+    val tipo: String?,                 // "ADICIONAL" etc
+    val nome: String,
+    val descricao: String?,
+
+    @JsonAdapter(DoubleOrNullAdapter::class)
+    val valor: Double?,                // muitas respostas usam "valor"
+
+    // Em pizza/outros pode vir o preÃ§o nesta tag:
+    @SerializedName("valor_ad")
+    @JsonAdapter(DoubleOrNullAdapter::class)
+    val valorAd: Double? = null,
+
+    val ativo: String?,
+    val categoria_nome: String? = null
+)
+
+/* -------------------------------------------------------------------------- */
+/*                                   PEDIDO                                   */
+/* -------------------------------------------------------------------------- */
+
+data class PedidoCriadoResp(
+    val codigo: String? = null
+)
+
+/* -------------------------------------------------------------------------- */
+/*                                  ADAPTERS                                  */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Aceita nÃºmero (12, 12.5) ou string ("12", "12,50") e devolve Double?.
+ * Retorna null em branco, "null" ou formatos invÃ¡lidos.
+ */
+class DoubleOrNullAdapter : JsonDeserializer<Double?> {
+    override fun deserialize(
+        json: JsonElement?,
+        typeOfT: Type?,
+        context: JsonDeserializationContext?
+    ): Double? {
+        if (json == null || json.isJsonNull) return null
+        val prim = json.asJsonPrimitive
+        return try {
+            when {
+                prim.isNumber -> prim.asNumber.toDouble()
+                prim.isString -> {
+                    val s = prim.asString.trim()
+                    if (s.isEmpty() || s.equals("null", true)) null
+                    else s.replace(',', '.').toDoubleOrNull()
+                }
+                else -> null
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+}
+
+/* -------------------------------------------------------------------------- */
+/*                                  HELPERS                                   */
+/* -------------------------------------------------------------------------- */
+
+/** Produto ativo quando "ativo" == "S". */
+val ProdutoDto.isAtivo: Boolean
+    get() = ativo.equals("S", ignoreCase = true)
+
+/** PreÃ§o do produto com fallback para 0.0. */
+val ProdutoDto.preco: Double
+    get() = valor ?: 0.0
+
+/**
+ * PreÃ§o do adicional com fallback:
+ * 1) Se `valor` for != 0, usa `valor`
+ * 2) SenÃ£o se existir `valor_ad`, usa `valor_ad`
+ * 3) SenÃ£o 0.0
+ */
+val AdicionalItemDto.preco: Double
+    get() = when {
+        (valor ?: 0.0) != 0.0 -> valor ?: 0.0
+        valorAd != null       -> valorAd
+        else                  -> 0.0
+    }
+
+/**
+ * Se o projeto tambÃ©m usa OpcaoAdicionalDto (em ProductDetailSheet, Carrinho, etc),
+ * mantemos a mesma regra de fallback. A classe fica em outro arquivo no mesmo pacote.
+ */
+val OpcaoAdicionalDto.preco: Double
+    get() = when {
+        (valor ?: 0.0) != 0.0 -> valor ?: 0.0
+        valorAd != null       -> valorAd!!
+        else                  -> 0.0
+    }
+
+
+
+
+==== app\src\main\java\com\helptech\abraham\data\remote\CallWaiter.kt ====
+
+package com.helptech.abraham.data.remote
+
+import com.google.gson.JsonElement
+import com.google.gson.JsonObject
+import com.google.gson.JsonParser
+import com.helptech.abraham.Env
+import com.helptech.abraham.data.remote.AkitemClient
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+
+/**
+ * Chamada tolerante para â€œchamar garÃ§omâ€.
+ * Tenta pares (mÃ³dulo, funÃ§Ã£o) comuns nos painÃ©is Tolon/Akitem.
+ * Corpo mÃ­nimo: { "mesa": "<rÃ³tulo>" }.
+ */
+suspend fun chamarGarcom(
+    mesaLabel: String,
+    moduloPreferido: String? = null,
+    funcaoPreferida: String? = null
+): Result<JsonElement?> {
+
+    // Primeiro tenta o par confirmado pelo cliente
+    val moduloCandidates = listOfNotNull(
+        moduloPreferido,
+        "empresa", "garcom", "atendimento", "pedido", "mesa"
+    ).distinct()
+
+    val funcaoCandidates = listOfNotNull(
+        funcaoPreferida,
+        "chamarAtendimento", "chamarGarcom", "chamar_garcom", "callGarcom", "chamar", "acionarGarcom"
+    ).distinct()
+
+    val body = mapOf("mesa" to mesaLabel)
+
+    for (m in moduloCandidates) {
+        for (f in funcaoCandidates) {
+            val env = AkitemClient.api.call(
+                empresa = null, // interceptors injetam (empresa/usuario/token) do runtime
+                modulo = m,
+                funcao = f,
+                body = body
+            )
+            if (env.erro == null) return Result.success(env.sucesso)
+        }
+    }
+
+    return Result.failure(
+        IllegalStateException("Nenhuma funÃ§Ã£o encontrada para chamar garÃ§om (ajuste modulo/funcao)")
+    )
+}
+
+/**
+ * Consulta o consumo/conta com o *cliente genÃ©rico* (envelope).
+ * âš ï¸ Em alguns backends "sucesso" vem como "true" (String) e nÃ£o como objeto/array.
+ * Para renderizar a conta/itens, prefira usar [consultarConsumoJson] abaixo,
+ * que retorna o **JSON bruto completo** da resposta.
+ */
+suspend fun consultarConsumo(
+    contaOuMesa: String,
+    moduloPreferido: String? = null,
+    funcaoPreferida: String? = null
+): Result<JsonElement?> {
+
+    val moduloCandidates = listOfNotNull(
+        moduloPreferido,
+        "empresa", "mesa", "pedido", "conta", "consumo"
+    ).distinct()
+
+    val funcaoCandidates = listOfNotNull(
+        funcaoPreferida,
+        "consultarConsumo", "consultar_consumo",
+        "consultarConta", "consultar_conta",
+        "consultaConsumo"
+    ).distinct()
+
+    val body = mapOf(
+        "conta" to contaOuMesa,
+        "mesa" to contaOuMesa
+    )
+
+    for (m in moduloCandidates) {
+        for (f in funcaoCandidates) {
+            val env = AkitemClient.api.call(
+                empresa = null, // interceptors injetam (empresa/usuario/token) do runtime
+                modulo = m,
+                funcao = f,
+                body = body
+            )
+            if (env.erro == null) {
+                // Pode ser "true" (String) e nÃ£o um objeto. Mantenho por compat.,
+                // mas para a UI use consultarConsumoJson().
+                return Result.success(env.sucesso)
+            }
+        }
+    }
+
+    return Result.failure(
+        IllegalStateException("Nenhuma funÃ§Ã£o encontrada para consultar consumo (ajuste modulo/funcao)")
+    )
+}
+
+/* ============================================================
+   VERSÃƒO RECOMENDADA PARA A UI
+   ------------------------------------------------------------
+   Faz a chamada HTTP direta e retorna o JSON **completo**:
+   { "sucesso": "...", "Conta": "...", "Cliente": {...}, "Itens":[...] }
+   Remove o BOM invisÃ­vel (observado no log: 'Ã¯Â»Â¿{').
+   Respeita base dinÃ¢mica (online x IP local) e credenciais do runtime.
+   ============================================================ */
+
+private val rawHttpClient by lazy { OkHttpClient() }
+
+/**
+ * Consulta de consumo que captura o **JSON bruto completo** da API Tolon,
+ * sem passar pelo "envelope" que pode reduzir a resposta a "sucesso":"true".
+ */
+suspend fun consultarConsumoJson(contaOuMesa: String): Result<JsonObject> = withContext(Dispatchers.IO) {
+    runCatching {
+        // Base dinÃ¢mica: usa Env.RUNTIME_BASE_URL se houver; senÃ£o, a base do build (LegacyConfig.BASE_URL)
+        val base = (Env.RUNTIME_BASE_URL ?: LegacyConfig.BASE_URL).let { if (it.endsWith("/")) it else "$it/" }
+        val url  = base + "integracao.php?empresa=${LegacyConfig.EMPRESA}"
+        // No ambiente do cliente o cURL usa sÃ³ "conta"
+        val payload = """{"conta":"$contaOuMesa"}""".toRequestBody("application/json".toMediaType())
+
+        val req = Request.Builder()
+            .url(url)
+            .post(payload)
+            .addHeader("modulo", "empresa")
+            .addHeader("funcao", "consultarConsumo")
+            .addHeader("Accept", "application/json")
+            .addHeader("Content-Type", "application/json")
+            .addHeader("Cache-Control", "no-cache")
+            // credenciais do runtime (interceptors fariam isso tambÃ©m, mas aqui Ã© chamada "crua")
+            .addHeader("token",   LegacyConfig.TOKEN)
+            .addHeader("usuario", LegacyConfig.USUARIO)
+            .addHeader("empresa", LegacyConfig.EMPRESA)
+            .build()
+
+        rawHttpClient.newCall(req).execute().use { resp ->
+            if (!resp.isSuccessful) error("HTTP ${resp.code}")
+            val raw = resp.body?.string() ?: error("Corpo vazio")
+            val clean = raw.removePrefix("\uFEFF").trim() // remove BOM
+            JsonParser.parseString(clean).asJsonObject
+        }
+    }
+}
+
+
+
+
+==== app\src\main\java\com\helptech\abraham\data\remote\GrupoAdicionalDto.kt ====
+
+package com.helptech.abraham.data.remote
+
+/**
+ * Grupo de adicionais de um produto.
+ * MantÃ©m compatibilidade com o nome antigo via typealias.
+ */
+data class GrupoAdicionalDto(
+    val codigo: Int,
+    val produtos_codigo: Int? = null,
+    val nome: String,
+
+    // Regras:
+    val adicional_qtde_min: Int? = null,
+    val adicional_qtde_max: Int? = null,
+    val adicional_juncao: String? = null,      // "SOMA", "MEDIA", ...
+
+    // Pizzas:
+    val sabor_pizza: String? = null,           // "S" | "N"
+
+    // Extras/ordenaÃ§Ã£o:
+    val ordem: Int? = null,
+    val descricao: String? = null,
+
+    // Lista de opÃ§Ãµes:
+    val adicionais: List<AdicionalItemDto> = emptyList()
+)
+
+/** Compatibilidade com cÃ³digo legado que ainda importa AdicionalGrupoDto. */
+typealias AdicionalGrupoDto = GrupoAdicionalDto
+
+
+
+
+==== app\src\main\java\com\helptech\abraham\data\remote\LegacyConfig.kt ====
+
+package com.helptech.abraham.data.remote
+
+import com.helptech.abraham.BuildConfig
+import com.helptech.abraham.Env
+
+/**
+ * Camada de compatibilidade p/ cÃ³digo antigo.
+ * Agora lÃª dos BuildConfig + valores em runtime do Env.
+ */
+object LegacyConfig {
+
+    val BASE_URL: String
+        get() = BuildConfig.API_BASE_URL.let { if (it.endsWith("/")) it else "$it/" }
+
+    val EMPRESA: String
+        get() = Env.RUNTIME_EMPRESA.ifBlank {
+            BuildConfig.API_EMPRESA.ifBlank { BuildConfig.DEFAULT_EMPRESA }
+        }.lowercase()
+
+    val USUARIO: String
+        get() = Env.RUNTIME_USUARIO.ifBlank { BuildConfig.API_USUARIO }
+
+    val TOKEN: String
+        get() = Env.RUNTIME_TOKEN.ifBlank { BuildConfig.API_TOKEN }
+}
+
+
+
+
+==== app\src\main\java\com\helptech\abraham\data\remote\OpcaoAdicionalDto.kt ====
+
+package com.helptech.abraham.data.remote
+
+import com.google.gson.annotations.JsonAdapter
+import com.google.gson.annotations.SerializedName
+
+/**
+ * OpÃ§Ã£o de adicional (item dentro de um grupo).
+ * Importante: o backend manda "valor_ad" (snake_case) â€” mapeado para "valorAd".
+ */
+data class OpcaoAdicionalDto(
+    val codigo: Int,
+    val categoria_codigo: Int? = null,
+    val tipo: String? = null,
+    val nome: String? = null,
+    val descricao: String? = null,
+    val sub_nome: String? = null,
+    val cor_sub_nome: String? = null,
+
+    // preÃ§o exibido â€œvalorâ€ (normalmente 0 para adicionais)
+    @SerializedName("valor")
+    @JsonAdapter(DoubleOrNullAdapter::class)
+    val valor: Double? = null,
+
+    // preÃ§o do adicional vindo do JSON
+    @SerializedName("valor_ad")
+    @JsonAdapter(DoubleOrNullAdapter::class)
+    val valorAd: Double? = null,
+
+    val estoque: Int? = null,
+    val limitar_estoque: String? = null,
+    val fracao: String? = null,
+    val item_adicional_obrigar: String? = null,
+    val adicional_juncao: String? = null,
+    val item_adicional_multi: String? = null,
+    val adicional_qtde_min: Int? = null,
+    val adicional_qtde_max: Int? = null,
+    val codigo_empresa: String? = null,
+    val codigo_barras: String? = null,
+    val codigo_barras_padrao: String? = null,
+    val usu_alt: Any? = null,
+    val dta_alteracao: String? = null,
+    val ativo: String? = null,
+    val qtde_min_pedido: Int? = null,
+    val incremento_qtde: Int? = null,
+    val ordem: Int? = null,
+    val limite_adicao: Int? = null,
+    val pizza_qtde_sabor: Int? = null,
+    val editavel: String? = null,
+    val vis_online: String? = null,
+    val pdv_obs: String? = null,
+    val valor_custo: String? = null,
+    val categoria_nome: String? = null
+)
+
+
+
+
+==== app\src\main\java\com\helptech\abraham\data\remote\PedidoService.kt ====
+
+package com.helptech.abraham.data.remote
+
+import com.google.gson.JsonElement
+import java.math.BigDecimal
+import java.math.RoundingMode
+
+/**
+ * Item mÃ­nimo para envio (cÃ³digo, quantidade, valor unit).
+ */
+data class ItemPedidoReq(
+    val codigoProduto: Int,
+    val quantidade: Int,
+    val valorUnit: Double
+)
+
+/**
+ * Utilidades para valores monetÃ¡rios.
+ */
+private fun bd2(v: Double): BigDecimal =
+    BigDecimal(v).setScale(2, RoundingMode.HALF_UP)
+
+/**
+ * Monta o mapa do cliente sem enviar campos vazios que quebram no back-end.
+ * - NÃƒO envia "codigo" quando nÃ£o hÃ¡ um cÃ³digo existente.
+ * - NÃƒO envia "fone" quando vazio (o banco deles espera inteiro; string vazia dÃ¡ erro 1366).
+ */
+private fun clienteMesa(mesaLabel: String): Map<String, Any?> {
+    val m = linkedMapOf<String, Any?>(
+        "nome" to "Mesa $mesaLabel",
+        "cpf" to null,
+        "dta_nasc" to null
+    )
+    // Se um dia tiver telefone, envie somente dÃ­gitos:
+    // val phoneDigits = telefone?.filter(Char::isDigit)
+    // if (!phoneDigits.isNullOrEmpty()) m["fone"] = phoneDigits
+    return m
+}
+
+/**
+ * Envia o pedido usando:
+ *   mÃ³dulo = "pedido"
+ *   funÃ§Ã£o = "gravarPedido"
+ *
+ * ObservaÃ§Ãµes:
+ * - tipo_entrega_codigo: nos exemplos do cliente "2" = BALCÃƒO.
+ * - forma_pgto_codigo: nos exemplos variou; por padrÃ£o "1" (Dinheiro).
+ * - "produtos": objeto com chaves sequenciais "1","2",... contendo os campos do item.
+ */
+suspend fun enviarPedido(
+    mesaLabel: String,                       // ex.: "MESA 10" ou "BALCÃƒO"
+    itens: List<ItemPedidoReq>,
+    tipoEntregaCodigo: String = "2",         // 2 = BALCÃƒO
+    formaPgtoCodigo: String = "1",           // 1 = Dinheiro
+    obsPedido: String = ""
+): Result<JsonElement?> {
+    require(itens.isNotEmpty()) { "Lista de itens vazia" }
+
+    // Total dos produtos
+    val total = itens.fold(BigDecimal.ZERO) { acc, it ->
+        acc + bd2(it.valorUnit) * BigDecimal(it.quantidade)
+    }.setScale(2, RoundingMode.HALF_UP)
+
+    // "produtos" precisa ser um OBJETO indexado por "1","2",...
+    val produtosAsObject: MutableMap<String, Any> = linkedMapOf()
+    var seq = 1
+    for (it in itens) {
+        val linha = linkedMapOf<String, Any?>(
+            "sequencial" to seq,
+            "adicional" to "",
+            "grupo_nome_adicional" to "",
+            "grupo_nome_adicional_dsc" to "",
+            "codigo" to it.codigoProduto.toString(),
+            // Nome Ã© opcional; mantemos vazio para nÃ£o depender do catÃ¡logo local
+            "nome" to "",
+            "qtde" to it.quantidade,
+            "vlr_unit" to bd2(it.valorUnit),
+            "vlr_total" to (bd2(it.valorUnit) * BigDecimal(it.quantidade)).setScale(2, RoundingMode.HALF_UP),
+            "prod_obs" to ""
+        )
+        produtosAsObject[(seq++).toString()] = linha
+    }
+
+    // Corpo conforme especificado pelo cliente
+    val body: Map<String, Any?> = linkedMapOf(
+        "cliente" to clienteMesa(mesaLabel),
+        "cli_endereco" to null,                  // nÃ£o necessÃ¡rio para balcÃ£o/mesa
+        "notificacao" to "",
+        "tipo_entrega_codigo" to tipoEntregaCodigo,
+        "entrega_agendada" to "N",
+        "entrega_agendada_data" to null,
+        "entrega_agendada_hora" to null,
+        "forma_pgto_codigo" to formaPgtoCodigo,
+        "forma_pgto_adicional" to "",
+        "tipo_entrega_adicional" to mesaLabel,   // aparece no painel
+        "local_entrega" to mesaLabel,            // idem
+        "situacao_pgto" to "PENDENTE",
+        "pedido_situacao_codigo" to 1,           // 1 = aguardando
+        "vlr_desc" to BigDecimal.ZERO,
+        "dsc_desc" to "",
+        "vlr_taxa" to BigDecimal.ZERO,
+        "dsc_taxa" to "",
+        "vlr_acrescimo" to BigDecimal.ZERO,
+        "vlr_produtos" to total,
+        "vlr_total" to total,
+        "obs" to obsPedido,
+        "produtos" to produtosAsObject,
+        "pin" to "",
+        "complementos" to emptyList<Map<String, String>>(),  // ex.: [{"campo":"troco_para","valor":"100"}]
+        "previsao_entrega" to null
+    )
+
+    val env = AkitemClient.api.call(
+        empresa = null,   // runtime via interceptor
+        modulo  = "pedido",
+        funcao  = "gravarPedido",
+        body    = body
+    )
+
+    return if (env.erro == null) Result.success(env.sucesso)
+    else Result.failure(IllegalStateException(env.erro))
+}
+
+/* Operador auxiliar para BigDecimal */
+private operator fun BigDecimal.times(other: BigDecimal): BigDecimal = this.multiply(other)
+
+
+
+
+==== app\src\main\java\com\helptech\abraham\env.kt ====
+
+package com.helptech.abraham
+
+/**
+ * Centraliza variÃ¡veis de ambiente/config e valores de runtime
+ * (preenchidos apÃ³s o authdevice).
+ */
+object Env {
+    /** Base URL lida do BuildConfig (gradle). */
+    val PANEL_BASE_URL: String
+        get() = BuildConfig.API_BASE_URL
+
+    /** Empresa padrÃ£o (tenant) de fallback â€” do BuildConfig. */
+    val DEFAULT_EMPRESA: String
+        get() = BuildConfig.DEFAULT_EMPRESA
+
+    /**
+     * Token de vendor para o endpoint authdevice.
+     * Se o seu for outro, troque aqui (ex.: "MIT").
+     */
+    const val AUTHDEVICE_TOKEN: String = "MIT"
+
+    /**
+     * Ãštil no emulador: force um serial especÃ­fico.
+     * Deixe null para usar o ANDROID_ID real.
+     */
+    val DEV_FORCE_SERIAL: String? = null
+
+    // === Preenchidos em runtime apÃ³s o authdevice ===
+    @Volatile var RUNTIME_EMPRESA: String = ""
+    @Volatile var RUNTIME_USUARIO: String = ""
+    @Volatile var RUNTIME_TOKEN:   String = ""
+
+    // === NOVO: base URL dinÃ¢mica (online x local) preenchida ao iniciar/apply settings ===
+    @Volatile var RUNTIME_BASE_URL: String? = null
+}
+
+
+
+
+==== app\src\main\java\com\helptech\abraham\integracao\AndroidId.kt ====
+
+package com.helptech.abraham.integracao
+
+import android.content.Context
+import android.provider.Settings
+
+fun getAndroidId(ctx: Context): String {
+    return Settings.Secure.getString(ctx.contentResolver, Settings.Secure.ANDROID_ID)
+        ?: "UNKNOWN_SN"
+}
+
+
+
+
+==== app\src\main\java\com\helptech\abraham\integracao\AuthBootstrapper.kt ====
+
+// AuthBootstrapper.kt
+package com.helptech.abraham.integracao
+
+import android.content.Context
+import android.provider.Settings   // <- add isso
+import com.helptech.abraham.Env
+import com.helptech.abraham.settings.AppSettings
+
+object AuthBootstrapper {
+    suspend fun ensureAuth(context: Context, serialOverride: String? = Env.DEV_FORCE_SERIAL) {
+        val serial: String = serialOverride
+            ?: Settings.Secure.getString(   // <- sem helper
+                context.contentResolver,
+                Settings.Secure.ANDROID_ID
+            )
+            ?: error("NÃ£o foi possÃ­vel obter o ANDROID_ID")
+
+        val resp = IntegracaoService.authDevice(
+            serialNumber = serial,
+            nome = Env.AUTHDEVICE_TOKEN
+        )
+
+        if (!resp.sucesso) error(resp.mensagem ?: "Falha no authdevice")
+
+        Env.RUNTIME_EMPRESA = resp.empresa.orEmpty()
+        Env.RUNTIME_USUARIO = resp.usuario.orEmpty()
+        Env.RUNTIME_TOKEN   = resp.token.orEmpty()
+
+        AppSettings.saveEmpresa(context, Env.RUNTIME_EMPRESA)
+        AppSettings.saveUsuario(context, Env.RUNTIME_USUARIO)
+        AppSettings.saveApiToken(context, Env.RUNTIME_TOKEN)
+    }
+}
+
+
+
+
+==== app\src\main\java\com\helptech\abraham\integracao\AuthHeadersInterceptor.kt ====
+
+package com.helptech.abraham.integracao
+
+import com.helptech.abraham.Env
+import okhttp3.Interceptor
+import okhttp3.Response
+
+/**
+ * Injeta automaticamente headers exigidos pela integraÃ§Ã£o da Tolon:
+ *  - empresa (se nÃ£o estiver presente)
+ *  - usuario (se nÃ£o estiver presente)
+ *  - token   (se nÃ£o estiver presente)
+ *
+ * Fontes: Env.RUNTIME_EMPRESA / RUNTIME_USUARIO / RUNTIME_TOKEN (preenchidos apÃ³s authdevice).
+ * ObservaÃ§Ãµes:
+ * - NÃ£o injeta nada quando a funÃ§Ã£o Ã© "authdevice".
+ * - Atua em QUALQUER host, desde que o path termine com /integracao.php (suporta IP local).
+ */
+class AuthHeadersInterceptor : Interceptor {
+    override fun intercept(chain: Interceptor.Chain): Response {
+        val req = chain.request()
+        val url = req.url
+
+        val isIntegracao = url.encodedPath.endsWith("/integracao.php")
+        if (!isIntegracao) return chain.proceed(req)
+
+        val isAuthDevice = req.header("funcao")?.equals("authdevice", ignoreCase = true) == true
+        if (isAuthDevice) return chain.proceed(req)
+
+        val empresa = Env.RUNTIME_EMPRESA.trim()
+        val usuario = Env.RUNTIME_USUARIO.trim()
+        val token   = Env.RUNTIME_TOKEN.trim()
+
+        val b = req.newBuilder()
+        if (req.header("empresa").isNullOrBlank() && empresa.isNotBlank()) b.header("empresa", empresa)
+        if (req.header("usuario").isNullOrBlank() && usuario.isNotBlank()) b.header("usuario", usuario)
+        if (req.header("token").isNullOrBlank()   && token.isNotBlank())   b.header("token", token)
+
+        return chain.proceed(b.build())
+    }
+}
+
+
+
+
+==== app\src\main\java\com\helptech\abraham\integracao\EmpresaParamInterceptor.kt ====
+
+package com.helptech.abraham.integracao
+
+import com.helptech.abraham.BuildConfig
+import com.helptech.abraham.Env
+import okhttp3.Interceptor
+import okhttp3.Response
+
+class EmpresaParamInterceptor : Interceptor {
+    override fun intercept(chain: Interceptor.Chain): Response {
+        val req = chain.request()
+        val url = req.url
+
+        val isIntegracao = url.encodedPath.endsWith("/integracao.php") ||
+                url.encodedPath.endsWith("integracao.php")
+        if (!isIntegracao) return chain.proceed(req)
+
+        // 1) valor obtido apÃ³s o authdevice
+        val empresaRuntime = Env.RUNTIME_EMPRESA.trim()
+        // 2) valor de build
+        val empresaBuild   = (BuildConfig.API_EMPRESA ?: "").trim()
+        // 3) fallback default
+        val empresaDefault = (BuildConfig.DEFAULT_EMPRESA ?: "").trim().ifEmpty { "mit" }
+
+        val empresa = listOf(empresaRuntime, empresaBuild, empresaDefault)
+            .firstOrNull { it.isNotEmpty() } ?: "mit"
+
+        val newUrl = url.newBuilder()
+            .removeAllQueryParameters("empresa")
+            .addQueryParameter("empresa", empresa)
+            .build()
+
+        val newReq = req.newBuilder()
+            .url(newUrl)
+            .apply {
+                if (req.header("empresa").isNullOrBlank()) header("empresa", empresa)
+                if (req.header("Accept") == null) header("Accept", "application/json")
+                if (req.header("Content-Type") == null) header("Content-Type", "application/json")
+                if (req.header("Cache-Control") == null) header("Cache-Control", "no-cache")
+            }
+            .build()
+
+        return chain.proceed(newReq)
+    }
+}
+
+
+
+
+==== app\src\main\java\com\helptech\abraham\integracao\IntegracaoService.kt ====
+
+package com.helptech.abraham.integracao
+
+import android.util.Log
+import com.google.gson.GsonBuilder
+import com.google.gson.JsonObject
+import com.google.gson.JsonParser
+import com.helptech.abraham.Env
+import com.helptech.abraham.network.Http
+import com.helptech.abraham.network.TolonApi
+import com.helptech.abraham.data.remote.ApiEnvelope
+import okhttp3.Interceptor
+import okhttp3.OkHttpClient
+import okhttp3.ResponseBody
+import okhttp3.logging.HttpLoggingInterceptor
+import retrofit2.Retrofit
+import retrofit2.converter.gson.GsonConverterFactory
+import retrofit2.http.Body
+import retrofit2.http.Header
+import retrofit2.http.POST
+import java.util.concurrent.TimeUnit
+
+data class AuthDeviceResp(
+    val sucesso: Boolean = false,
+    val mensagem: String? = null,
+    val token: String? = null,
+    val empresa: String? = null,
+    val usuario: String? = null
+)
+
+/* ========= APIs ========= */
+
+private interface TolonAuthApi {
+    @POST("integracao.php")
+    suspend fun authDevice(
+        @Header("funcao") funcao: String = "authdevice",
+        @Header("token") vendorToken: String,          // ex.: "MIT"
+        // IMPORTANTE: nÃ£o mandar "empresa" aqui
+        @Body body: Map<String, String>
+    ): AuthDeviceResp
+}
+
+/**
+ * API â€œrawâ€ para pegar o corpo inteiro de endpoints que **nÃ£o** usam
+ * o envelope padrÃ£o (como empresa/consultarConsumo).
+ * Os cabeÃ§alhos de empresa/usuario/token sÃ£o inseridos pelo interceptor do Http.retrofit.
+ */
+private interface TolonRawApi {
+    @POST("integracao.php")
+    suspend fun callRaw(
+        @Header("modulo") modulo: String,
+        @Header("funcao") funcao: String,
+        @Body body: Map<String, @JvmSuppressWildcards Any?>
+    ): ResponseBody
+}
+
+/* ========= ServiÃ§o ========= */
+
+object IntegracaoService {
+
+    // ---------- Cliente dedicado ao authdevice ----------
+    private val gson = GsonBuilder()
+        .setLenient()
+        .serializeNulls()
+        .create()
+
+    private val logging = HttpLoggingInterceptor().apply {
+        redactHeader("token")
+        level = HttpLoggingInterceptor.Level.BODY
+    }
+
+    private val authClient = OkHttpClient.Builder()
+        .addInterceptor(Interceptor { chain ->
+            val req = chain.request().newBuilder()
+                .addHeader("Accept", "application/json")
+                .addHeader("Content-Type", "application/json")
+                .build()
+            chain.proceed(req)
+        })
+        .addInterceptor(logging)
+        .connectTimeout(20, TimeUnit.SECONDS)
+        .readTimeout(20, TimeUnit.SECONDS)
+        .retryOnConnectionFailure(true)
+        .build()
+
+    // base dinÃ¢mica para auth: usa RUNTIME_BASE_URL se setada; senÃ£o base do build
+    private fun authBaseUrl(): String {
+        val base = (Env.RUNTIME_BASE_URL ?: Env.PANEL_BASE_URL)
+        return if (base.endsWith("/")) base else "$base/"
+    }
+
+    private val authRetrofit by lazy {
+        Retrofit.Builder()
+            .baseUrl(authBaseUrl())
+            .addConverterFactory(GsonConverterFactory.create(gson))
+            .client(authClient)
+            .build()
+    }
+
+    private val authApi by lazy { authRetrofit.create(TolonAuthApi::class.java) }
+
+    suspend fun authDevice(
+        serialNumber: String,
+        nome: String
+    ): AuthDeviceResp {
+        Log.i("IntegracaoService", "authdevice SN=$serialNumber, nome=$nome")
+        val body = mapOf(
+            "serialnumber" to serialNumber,
+            "Nome" to nome
+        )
+        return authApi.authDevice(
+            vendorToken = Env.AUTHDEVICE_TOKEN,
+            body = body
+        )
+    }
+
+    // ---------- Demais chamadas ----------
+    private val api: TolonApi by lazy { Http.retrofit.create(TolonApi::class.java) }
+
+    // Envelope padrÃ£o (mantido para quem jÃ¡ usa)
+    suspend fun consultarConsumo(conta: String, empresaQuery: String? = null): ApiEnvelope {
+        val body = mapOf<String, Any?>(
+            "conta" to conta
+        )
+        return api.call(
+            modulo = "empresa",
+            funcao = "consultarConsumo",
+            empresa = empresaQuery, // pode ser null se jÃ¡ vier do interceptor
+            body = body
+        )
+    }
+
+    // ---------- Variante RAW que devolve o JSON completo ----------
+    private val rawApi: TolonRawApi by lazy { Http.retrofit.create(TolonRawApi::class.java) }
+
+    /**
+     * Chamada recomendada para â€œMinha contaâ€.
+     * Retorna o objeto completo do servidor (com campos: sucesso, Conta, Cliente, Itens, ...).
+     * Faz limpeza de BOM e parse manual para maior robustez.
+     */
+    suspend fun consultarConsumoJson(conta: String): Result<JsonObject> = runCatching {
+        val body = mapOf<String, Any?>("conta" to conta)
+        val respText = rawApi
+            .callRaw(modulo = "empresa", funcao = "consultarConsumo", body = body)
+            .string()
+
+        // Remove BOM, se houver, e parseia
+        val clean = if (respText.isNotEmpty() && respText[0] == '\uFEFF') respText.substring(1) else respText
+        JsonParser.parseString(clean).asJsonObject
+    }
+}
+
+
+
+
+==== app\src\main\java\com\helptech\abraham\MainActivity.kt ====
+
+package com.helptech.abraham
+
+import android.os.Bundle
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.compose.foundation.layout.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
+import com.helptech.abraham.integracao.AuthBootstrapper
+import com.helptech.abraham.settings.AppSettings
+import com.helptech.abraham.ui.SetupScreen
+import com.helptech.abraham.ui.theme.ApiPlayground
+import kotlinx.coroutines.launch
+
+// === MOVIDO PARA TOPO: estados de auth ===
+sealed interface AuthState {
+    data object Idle : AuthState
+    data object Loading : AuthState
+    data object Success : AuthState
+    data class Error(val message: String) : AuthState
+}
+
+class MainActivity : ComponentActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContent {
+            val ctx = LocalContext.current
+            val scope = rememberCoroutineScope()
+
+            // 0) aplica base URL dinÃ¢mica salva (online/local)
+            LaunchedEffect(Unit) {
+                val base = AppSettings.getBaseUrlOnce(ctx)
+                Env.RUNTIME_BASE_URL = base
+            }
+
+            // 1) checa configuraÃ§Ã£o inicial
+            var isConfigured by remember { mutableStateOf<Boolean?>(null) }
+            LaunchedEffect(Unit) {
+                isConfigured = AppSettings.isConfigured(ctx)
+            }
+
+            // 2) estado do auth
+            var authState by remember { mutableStateOf<AuthState>(AuthState.Idle) }
+
+            // 3) quando configurado, faz o auth uma vez
+            LaunchedEffect(isConfigured) {
+                if (isConfigured == true) {
+                    authState = AuthState.Loading
+                    runCatching {
+                        AuthBootstrapper.ensureAuth(context = ctx.applicationContext)
+                    }.onSuccess {
+                        authState = AuthState.Success
+                    }.onFailure { t ->
+                        authState = AuthState.Error(t.message ?: "Falha ao autenticar o dispositivo")
+                    }
+                }
+            }
+
+            // 4) UI
+            when (isConfigured) {
+                null -> LoadingBox()
+                false -> SetupScreen(onConfigured = { isConfigured = true })
+                true -> when (val s = authState) {
+                    AuthState.Idle, AuthState.Loading -> LoadingBox()
+                    is AuthState.Error -> ErrorBox(
+                        message = s.message,
+                        onRetry = {
+                            authState = AuthState.Loading
+                            scope.launch {
+                                runCatching {
+                                    AuthBootstrapper.ensureAuth(context = ctx.applicationContext)
+                                }.onSuccess { authState = AuthState.Success }
+                                    .onFailure { e -> authState = AuthState.Error(e.message ?: "Erro ao autenticar") }
+                            }
+                        }
+                    )
+                    AuthState.Success -> ApiPlayground()
+                }
+            }
+        }
+    }
+}
+
+/* Helpers simples de UI */
+@Composable
+private fun LoadingBox() {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        CircularProgressIndicator()
+    }
+}
+
+@Composable
+private fun ErrorBox(message: String, onRetry: () -> Unit) {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(text = message)
+            Spacer(Modifier.height(16.dp))
+            Button(onClick = onRetry) { Text("Tentar novamente") }
+        }
+    }
+}
+
+
+
+
+==== app\src\main\java\com\helptech\abraham\network\AdicionaisRepo.kt ====
+
+package com.helptech.abraham.network
+
+import android.util.Log
+import com.google.gson.Gson
+import com.google.gson.JsonElement
+import com.google.gson.JsonObject
+import com.google.gson.JsonParser
+import com.google.gson.reflect.TypeToken
+import com.helptech.abraham.data.remote.AdicionalItemDto
+import com.helptech.abraham.data.remote.GrupoAdicionalDto
+import com.helptech.abraham.data.remote.ProdutoDto
+
+/**
+ * LÃª os "adicionais" que jÃ¡ podem vir junto do Produto (em vÃ¡rios formatos)
+ * e normaliza para List<GrupoAdicionalDto>.
+ *
+ * Formatos aceitos (vistos em ambientes diferentes):
+ *  - produto.adicionais Ã© List<GrupoAdicionalDto>
+ *  - produto.adicionais Ã© List<Map<String, *>> com chaves legadas: "grupo", "obrigatorio", "max", "opcoes"
+ *  - produto.adicionais Ã© Map com "grupos" ou "adicionais" contendo uma lista
+ *  - produto.adicionais Ã© JsonElement ou String com os formatos acima
+ */
+object AdicionaisRepo {
+    private const val TAG = "AdicionaisRepo"
+    private val gson by lazy { Gson() }
+
+    fun fromProduto(produto: ProdutoDto): List<GrupoAdicionalDto> {
+        val raw = produto.adicionais ?: return emptyList()
+
+        return try {
+            when (raw) {
+                is List<*> -> parseListAny(raw)
+                is Map<*, *> -> parseMapAny(raw)
+                is JsonElement -> parseJsonElement(raw)
+                is String -> parseString(raw)
+                else -> {
+                    Log.d(TAG, "Formato de adicionais nÃ£o reconhecido: ${raw::class.java.simpleName}")
+                    emptyList()
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Falha ao converter adicionais do produto ${produto.codigo}: ${e.message}")
+            emptyList()
+        }
+    }
+
+    /* ----------------------------- Parsers ------------------------------ */
+
+    private fun parseString(s: String): List<GrupoAdicionalDto> {
+        val trimmed = s.trim()
+        if (trimmed.isEmpty()) return emptyList()
+        return try {
+            val je = JsonParser.parseString(trimmed)
+            parseJsonElement(je)
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    private fun parseJsonElement(el: JsonElement): List<GrupoAdicionalDto> {
+        if (el.isJsonNull) return emptyList()
+
+        // Tenta direto como lista de GrupoAdicionalDto
+        runCatching {
+            val listType = object : TypeToken<List<GrupoAdicionalDto>>() {}.type
+            return gson.fromJson<List<GrupoAdicionalDto>>(el, listType) ?: emptyList()
+        }
+
+        if (el.isJsonObject) {
+            val obj = el.asJsonObject
+            // Pode vir uma chave "grupos" ou "adicionais"
+            if (obj.has("grupos")) {
+                return parseJsonElement(obj.get("grupos"))
+            }
+            if (obj.has("adicionais")) {
+                return parseJsonElement(obj.get("adicionais"))
+            }
+
+            // Formato legado: lista de grupos com "grupo", "obrigatorio", "max", "opcoes"
+            return parseLegacyGroupsFromJsonObject(obj)
+        }
+
+        // Array genÃ©rico
+        if (el.isJsonArray) {
+            val arr = el.asJsonArray
+            val anyList = gson.fromJson<List<Any>>(arr, object : TypeToken<List<Any>>() {}.type)
+            return parseListAny(anyList)
+        }
+
+        return emptyList()
+    }
+
+    private fun parseLegacyGroupsFromJsonObject(obj: JsonObject): List<GrupoAdicionalDto> {
+        // Alguns ambientes aninham os grupos numa chave qualquer; tenta achar a primeira lista
+        val entryWithArray = obj.entrySet().firstOrNull { it.value.isJsonArray }
+        val arr = entryWithArray?.value ?: return emptyList()
+        return parseJsonElement(arr)
+    }
+
+    private fun parseListAny(list: List<*>): List<GrupoAdicionalDto> {
+        if (list.isEmpty()) return emptyList()
+
+        // Caso jÃ¡ seja a lista do tipo certo
+        if (list.first() is GrupoAdicionalDto) {
+            @Suppress("UNCHECKED_CAST")
+            return list as List<GrupoAdicionalDto>
+        }
+
+        // Lista de JsonObject / Map (formatos variados)
+        val out = ArrayList<GrupoAdicionalDto>()
+        list.forEachIndexed { index, item ->
+            when (item) {
+                is JsonElement -> out += parseOneFromJsonElement(item, index)
+                is Map<*, *>   -> parseOneFromMap(item, index)?.let { out += it }
+                is String      -> {
+                    val el = runCatching { JsonParser.parseString(item) }.getOrNull()
+                    if (el != null) out += parseOneFromJsonElement(el, index)
+                }
+            }
+        }
+        return out
+    }
+
+    private fun parseMapAny(map: Map<*, *>): List<GrupoAdicionalDto> {
+        // Map pode ter "grupos" ou "adicionais" dentro
+        val inner = when {
+            map.containsKey("grupos")     -> map["grupos"]
+            map.containsKey("adicionais") -> map["adicionais"]
+            else -> null
+        }
+        return when (inner) {
+            is List<*>       -> parseListAny(inner)
+            is JsonElement   -> parseJsonElement(inner)
+            is String        -> parseString(inner)
+            is Map<*, *>     -> parseMapAny(inner)
+            else             -> emptyList()
+        }
+    }
+
+    private fun parseOneFromJsonElement(el: JsonElement, index: Int): GrupoAdicionalDto {
+        // Tenta direto como GrupoAdicionalDto
+        runCatching {
+            return gson.fromJson(el, GrupoAdicionalDto::class.java)
+        }
+
+        // Se for objeto, tenta como legado
+        if (el.isJsonObject) {
+            val obj = el.asJsonObject
+            val nome = obj.getAsStringOrNull("nome")
+                ?: obj.getAsStringOrNull("grupo")
+                ?: "Grupo ${index + 1}"
+
+            val obrigatorio = obj.getAsStringOrNull("obrigatorio")?.equals("S", true)
+                ?: obj.getAsBooleanOrNull("obrigatorio")
+                ?: false
+
+            val max = obj.getAsIntOrNull("max")
+                ?: obj.getAsIntOrNull("adicional_qtde_max")
+
+            val min = obj.getAsIntOrNull("adicional_qtde_min")
+                ?: (if (obrigatorio) 1 else 0)
+
+            val ordem = obj.getAsIntOrNull("ordem") ?: (index + 1)
+
+            val opcoesEl = when {
+                obj.has("opcoes")     -> obj.get("opcoes")
+                obj.has("adicionais") -> obj.get("adicionais")
+                else -> null
+            }
+
+            val opcoes: List<AdicionalItemDto> = when {
+                opcoesEl == null || opcoesEl.isJsonNull -> emptyList()
+                opcoesEl.isJsonArray -> {
+                    val listType = object : TypeToken<List<AdicionalItemDto>>() {}.type
+                    runCatching { gson.fromJson<List<AdicionalItemDto>>(opcoesEl, listType) }
+                        .getOrDefault(emptyList())
+                }
+                else -> emptyList()
+            }
+
+            val codigo = obj.getAsIntOrNull("codigo") ?: -(index + 1)
+
+            return GrupoAdicionalDto(
+                codigo = codigo,
+                produtos_codigo = obj.getAsIntOrNull("produtos_codigo"),
+                nome = nome,
+                adicional_qtde_min = min,
+                adicional_qtde_max = max,
+                adicional_juncao = obj.getAsStringOrNull("adicional_juncao"),
+                sabor_pizza = obj.getAsStringOrNull("sabor_pizza"),
+                ordem = ordem,
+                descricao = obj.getAsStringOrNull("descricao"),
+                adicionais = opcoes
+            )
+        }
+
+        // Fallback vazio
+        return GrupoAdicionalDto(
+            codigo = -(index + 1),
+            produtos_codigo = null,
+            nome = "Grupo ${index + 1}",
+            adicionais = emptyList()
+        )
+    }
+
+    private fun parseOneFromMap(map: Map<*, *>, index: Int): GrupoAdicionalDto? {
+        // Transforma num JsonObject para reutilizar a lÃ³gica acima
+        val json = gson.toJsonTree(map)
+        return parseOneFromJsonElement(json, index)
+    }
+}
+
+/* --------------------------- Helpers JsonObject --------------------------- */
+
+private fun JsonObject.getAsStringOrNull(key: String): String? =
+    runCatching { this.get(key)?.takeIf { !it.isJsonNull }?.asString?.trim()?.takeIf { it.isNotEmpty() } }.getOrNull()
+
+private fun JsonObject.getAsIntOrNull(key: String): Int? =
+    runCatching {
+        val el = this.get(key) ?: return null
+        when {
+            el.isJsonNull -> null
+            el.isJsonPrimitive && el.asJsonPrimitive.isNumber -> el.asInt
+            el.isJsonPrimitive && el.asJsonPrimitive.isString -> el.asString.trim().toIntOrNull()
+            else -> null
+        }
+    }.getOrNull()
+
+private fun JsonObject.getAsBooleanOrNull(key: String): Boolean? =
+    runCatching {
+        val el = this.get(key) ?: return null
+        when {
+            el.isJsonNull -> null
+            el.isJsonPrimitive && el.asJsonPrimitive.isBoolean -> el.asBoolean
+            el.isJsonPrimitive && el.asJsonPrimitive.isString -> {
+                val s = el.asString.trim().lowercase()
+                when (s) {
+                    "s", "sim", "true", "1" -> true
+                    "n", "nao", "nÃ£o", "false", "0" -> false
+                    else -> null
+                }
+            }
+            else -> null
+        }
+    }.getOrNull()
+
+
+
+
+==== app\src\main\java\com\helptech\abraham\network\AdicionaisService.kt ====
+
+package com.helptech.abraham.network
+
+import android.util.Log
+import com.google.gson.Gson
+import com.google.gson.JsonElement
+import com.google.gson.reflect.TypeToken
+import com.helptech.abraham.data.remote.*
+
+/**
+ * Consulta adicionais tentando 3 variaÃ§Ãµes conhecidas.
+ * Fallback para quando o Produto nÃ£o traz "adicionais".
+ */
+object AdicionaisService {
+    private const val TAG = "AdicionaisService"
+    private val gson = Gson()
+
+    suspend fun consultarAdicionais(produtoCodigo: Int): List<AdicionalGrupoDto> {
+        // 1) produto/consultarAdicional
+        consultar(
+            modulo = "produto",
+            funcao = "consultarAdicional",
+            body = mapOf("produto_codigo" to produtoCodigo)
+        )?.let { return it }
+
+        // 2) adicional/consultar
+        consultar(
+            modulo = "adicional",
+            funcao = "consultar",
+            body = mapOf("produto_codigo" to produtoCodigo)
+        )?.let { return it }
+
+        // 3) produto/consultar + com_adicionais=S
+        consultar(
+            modulo = "produto",
+            funcao = "consultar",
+            body = mapOf("codigo" to produtoCodigo, "com_adicionais" to "S")
+        )?.let { return it }
+
+        return emptyList()
+    }
+
+    private suspend fun consultar(
+        modulo: String,
+        funcao: String,
+        body: Map<String, Any?>
+    ): List<AdicionalGrupoDto>? {
+        return try {
+            val env: ApiEnvelope = AkitemClient.api.call(
+                empresa = null, // deixa o interceptor definir a empresa do runtime
+                modulo = modulo,
+                funcao = funcao,
+                body = body
+            )
+            if (env.erro != null) {
+                Log.w(TAG, "API $modulo/$funcao: ${env.erro}")
+                return null
+            }
+
+            // produto/consultar => lista de produtos; extrair adicionais do item pedido
+            if (modulo == "produto" && funcao == "consultar") {
+                parseProdutoComAdicionais(env.sucesso, (body["codigo"] as? Int) ?: -1)
+            } else {
+                parseGruposDireto(env.sucesso)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "API $modulo/$funcao falhou: ${e.message}")
+            null
+        }
+    }
+
+    /** Caso jÃ¡ seja lista de grupos, ou { "grupos": [...] } / { "adicionais": [...] } */
+    private fun parseGruposDireto(el: JsonElement?): List<AdicionalGrupoDto> {
+        if (el == null || el.isJsonNull) return emptyList()
+        val listType = object : TypeToken<List<AdicionalGrupoDto>>() {}.type
+        return try {
+            when {
+                el.isJsonArray -> Gson().fromJson(el, listType) ?: emptyList()
+                el.isJsonObject -> {
+                    val obj = el.asJsonObject
+                    when {
+                        obj.has("grupos")     -> Gson().fromJson(obj.get("grupos"), listType) ?: emptyList()
+                        obj.has("adicionais") -> Gson().fromJson(obj.get("adicionais"), listType) ?: emptyList()
+                        else -> emptyList()
+                    }
+                }
+                else -> emptyList()
+            }
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    /** produto/consultar?com_adicionais=S -> sucesso Ã© lista de produtos; pegar adicionais do cÃ³digo pedido */
+    private fun parseProdutoComAdicionais(el: JsonElement?, codigo: Int): List<AdicionalGrupoDto> {
+        if (el == null || el.isJsonNull) return emptyList()
+        val listType = object : TypeToken<List<ProdutoComAdicionaisItem>>() {}.type
+        return try {
+            val itens: List<ProdutoComAdicionaisItem> = when {
+                el.isJsonArray -> Gson().fromJson(el, listType) ?: emptyList()
+                el.isJsonObject && el.asJsonObject.has("sucesso") ->
+                    Gson().fromJson(el.asJsonObject.get("sucesso"), listType) ?: emptyList()
+                else -> emptyList()
+            }
+            val doProduto = itens.firstOrNull { it.codigo == codigo }
+            doProduto?.blocoAdicionais?.sucesso ?: emptyList()
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+}
+
+
+
+
+==== app\src\main\java\com\helptech\abraham\network\BaseUrlInterceptor.kt ====
+
+package com.helptech.abraham.network
+
+import com.helptech.abraham.Env
+import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.Interceptor
+import okhttp3.Response
+
+/**
+ * Permite trocar o host/scheme/port em runtime (ex.: online -> IP local),
+ * preservando path e query da requisiÃ§Ã£o original.
+ *
+ * Basta setar Env.RUNTIME_BASE_URL (ex.: "http://192.168.0.10/").
+ */
+class BaseUrlInterceptor : Interceptor {
+    override fun intercept(chain: Interceptor.Chain): Response {
+        val req = chain.request()
+        val dynamicBase = Env.RUNTIME_BASE_URL
+
+        if (dynamicBase.isNullOrBlank()) {
+            return chain.proceed(req)
+        }
+
+        val newBase = dynamicBase.let { if (it.endsWith("/")) it else "$it/" }.toHttpUrl()
+        val oldUrl = req.url
+
+        val newUrl = oldUrl.newBuilder()
+            .scheme(newBase.scheme)
+            .host(newBase.host)
+            .port(newBase.port)
+            .build()
+
+        val newReq = req.newBuilder().url(newUrl).build()
+        return chain.proceed(newReq)
+    }
+}
+
+
+
+
+==== app\src\main\java\com\helptech\abraham\network\EmpresaService.kt ====
+
+package com.helptech.abraham.network
+
+import com.helptech.abraham.data.remote.ApiEnvelope
+
+/**
+ * AÃ§Ãµes do mÃ³dulo "empresa" pedidas no cURL:
+ * - chamarAtendimento { "mesa": "32" }
+ * - consultarConsumo { "conta": "32" }
+ *
+ * Reusa o TolonApi.call que jÃ¡ injeta headers e ?empresa= via interceptors do projeto.
+ */
+object EmpresaService {
+    private val api = Http.retrofit.create(TolonApi::class.java)
+
+    suspend fun chamarAtendimento(mesa: String): ApiEnvelope =
+        api.call(
+            modulo = "empresa",
+            funcao = "chamarAtendimento",
+            body = mapOf("mesa" to mesa)
+        )
+
+    suspend fun consultarConsumo(conta: String): ApiEnvelope =
+        api.call(
+            modulo = "empresa",
+            funcao = "consultarConsumo",
+            body = mapOf("conta" to conta)
+        )
+}
+
+
+
+
+==== app\src\main\java\com\helptech\abraham\network\Http.kt ====
+
+package com.helptech.abraham.network
+
+import com.helptech.abraham.BuildConfig
+import com.helptech.abraham.integracao.EmpresaParamInterceptor
+import okhttp3.Interceptor
+import okhttp3.OkHttpClient
+import okhttp3.Response
+import okhttp3.ResponseBody.Companion.toResponseBody
+import okhttp3.logging.HttpLoggingInterceptor
+import retrofit2.Retrofit
+import retrofit2.converter.gson.GsonConverterFactory
+import retrofit2.converter.scalars.ScalarsConverterFactory
+import java.util.concurrent.TimeUnit
+
+/**
+ * Remove BOM (\uFEFF) de respostas JSON/texto.
+ */
+private class BomStrippingInterceptor : Interceptor {
+    override fun intercept(chain: Interceptor.Chain): Response {
+        val response = chain.proceed(chain.request())
+        val body = response.body ?: return response
+        val asString = try { body.string() } catch (_: Throwable) { return response }
+        val cleaned = if (asString.startsWith('\uFEFF')) asString.substring(1) else asString
+        val newBody = cleaned.toResponseBody(body.contentType())
+        return response.newBuilder().body(newBody).build()
+    }
+}
+
+object Http {
+    val client: OkHttpClient by lazy {
+        val log = HttpLoggingInterceptor().apply {
+            redactHeader("token")
+            level = if (BuildConfig.DEBUG) HttpLoggingInterceptor.Level.BODY
+            else HttpLoggingInterceptor.Level.BASIC
+        }
+
+        OkHttpClient.Builder()
+            .connectTimeout(30, TimeUnit.SECONDS)
+            .readTimeout(60, TimeUnit.SECONDS)
+            .writeTimeout(60, TimeUnit.SECONDS)
+            // headers mÃ­nimos
+            .addInterceptor { chain ->
+                chain.proceed(
+                    chain.request().newBuilder()
+                        .header("Accept", "application/json")
+                        .header("Content-Type", "application/json")
+                        .header("Cache-Control", "no-cache")
+                        .build()
+                )
+            }
+            // base dinÃ¢mica (online/local)
+            .addInterceptor(BaseUrlInterceptor())
+            // headers de autenticaÃ§Ã£o pÃ³s-authdevice
+            .addInterceptor(com.helptech.abraham.integracao.AuthHeadersInterceptor())
+            // garante ?empresa= consistente com o runtime
+            .addInterceptor(EmpresaParamInterceptor())
+            // remove BOM
+            .addInterceptor(BomStrippingInterceptor())
+            .addInterceptor(log)
+            // controla rajada de requests
+            .dispatcher(okhttp3.Dispatcher().apply {
+                maxRequests = 32
+                maxRequestsPerHost = 8
+            })
+            .build()
+    }
+
+    val retrofit: Retrofit by lazy {
+        val base = BuildConfig.API_BASE_URL.let { if (it.endsWith('/')) it else "$it/" }
+        Retrofit.Builder()
+            .baseUrl(base)
+            .client(client)
+            // Scalars antes de Gson
+            .addConverterFactory(ScalarsConverterFactory.create())
+            .addConverterFactory(GsonConverterFactory.create())
+            .build()
+    }
+}
+
+
+
+
+==== app\src\main\java\com\helptech\abraham\network\ImagemService.kt ====
+
+package com.helptech.abraham.network
+
+import com.google.gson.JsonElement
+import com.google.gson.JsonObject
+import com.helptech.abraham.data.remote.AkitemClient
+import com.helptech.abraham.data.remote.ApiEnvelope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import java.util.concurrent.ConcurrentHashMap
+
+private const val IMG_HOST = "https://tolon.com.br/"
+
+/**
+ * Cache em memÃ³ria. String nÃ£o-nula:
+ * - URL vÃ¡lida = string com valor
+ * - "miss" (sem imagem) = string vazia ""
+ */
+private val imagemCache = ConcurrentHashMap<Int, String>()
+
+/** Converte path/URL parcial em URL absoluta. */
+private fun toAbsoluteUrl(pathOrUrl: String): String {
+    val p = pathOrUrl.trim()
+    return if (p.startsWith("http", ignoreCase = true)) p
+    else IMG_HOST + p.removePrefix("/")
+}
+
+/** Procura um campo de URL de imagem em um objeto arbitrÃ¡rio. */
+private fun extractUrlFromImageObj(obj: JsonObject): String? {
+    val candidates = listOf("urlFoto", "url", "foto", "image", "path")
+    for (k in candidates) {
+        if (obj.has(k)) {
+            val v = obj.get(k)
+            if (v != null && !v.isJsonNull) {
+                val s = v.asString.trim()
+                if (s.isNotEmpty()) return s
+            }
+        }
+    }
+    return null
+}
+
+/** LÃª o JsonElement retornado em "sucesso" e tenta achar a URL principal. */
+private fun findPrincipalUrlFromSuccess(sucesso: JsonElement): String? {
+    val productObj: JsonObject = when {
+        sucesso.isJsonArray && sucesso.asJsonArray.size() > 0 ->
+            sucesso.asJsonArray[0].asJsonObject
+        sucesso.isJsonObject -> sucesso.asJsonObject
+        else -> return null
+    }
+
+    if (productObj.has("imagens") && productObj.get("imagens").isJsonArray) {
+        val arr = productObj.getAsJsonArray("imagens")
+
+        // 1) principal = "S"
+        for (el in arr) {
+            if (!el.isJsonObject) continue
+            val obj = el.asJsonObject
+            val principal = obj.get("principal")?.asString?.equals("S", true) == true
+            if (principal) return extractUrlFromImageObj(obj)
+        }
+
+        // 2) primeira imagem
+        if (arr.size() > 0 && arr[0].isJsonObject) {
+            extractUrlFromImageObj(arr[0].asJsonObject)?.let { return it }
+        }
+    }
+
+    // Fallbacks: alguns retornos colocam url direto no produto
+    extractUrlFromImageObj(productObj)?.let { return it }
+
+    return null
+}
+
+/**
+ * Busca a foto principal de um produto.
+ * EstratÃ©gia: cache ("" = miss) + consulta produto/consultar por cÃ³digo.
+ */
+suspend fun buscarFotoPrincipal(codigoProduto: Int): String? = withContext(Dispatchers.IO) {
+    imagemCache[codigoProduto]?.let { cached ->
+        return@withContext cached.ifBlank { null }
+    }
+
+    val body = mapOf(
+        "item_adicional" to "",
+        "n_categoria_codigo" to "",
+        "codigo" to codigoProduto.toString(),
+        "codigo_empresa" to "",
+        "ativo" to "",
+        "imagem" to ""
+    )
+
+    val env: ApiEnvelope = runCatching {
+        AkitemClient.api.call(
+            empresa = null, // empresa vem do interceptor
+            modulo = "produto",
+            funcao = "consultar",
+            body = body
+        )
+    }.getOrElse {
+        imagemCache[codigoProduto] = ""
+        return@withContext null
+    }
+
+    if (env.erro != null) {
+        imagemCache[codigoProduto] = ""
+        return@withContext null
+    }
+
+    val urlPath = env.sucesso?.let { findPrincipalUrlFromSuccess(it) }
+    val finalUrl = urlPath?.let { toAbsoluteUrl(it) } ?: ""
+
+    imagemCache[codigoProduto] = finalUrl
+    return@withContext finalUrl.ifBlank { null }
+}
+
+
+
+
+==== app\src\main\java\com\helptech\abraham\network\TolonApi.kt ====
+
+package com.helptech.abraham.network
+
+import com.helptech.abraham.data.remote.ApiEnvelope
+import retrofit2.http.Body
+import retrofit2.http.Header
+import retrofit2.http.POST
+import retrofit2.http.Query
+
+/**
+ * Endpoint genÃ©rico: POST integracao.php
+ * - Headers obrigatÃ³rios: modulo, funcao
+ * - Query opcional: empresa (tambÃ©m pode vir pelo interceptor)
+ * - Body: JSON livre
+ */
+interface TolonApi {
+
+    @POST("integracao.php")
+    suspend fun call(
+        @Header("modulo") modulo: String,
+        @Header("funcao") funcao: String,
+        @Query("empresa") empresa: String? = null,
+        @Body body: Map<String, @JvmSuppressWildcards Any?>
+    ): ApiEnvelope
+}
+
+
+
+
+==== app\src\main\java\com\helptech\abraham\settings\AppSettings.kt ====
+
+package com.helptech.abraham.settings
+
+import android.content.Context
+import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.preferencesDataStore
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.Flow
+import com.helptech.abraham.BuildConfig
+
+enum class DeviceRole { MESA, BALCAO }
+
+val Context.dataStore by preferencesDataStore(name = "app_settings")
+
+object AppSettings {
+
+    private val KEY_ROLE       = stringPreferencesKey("role")
+    private val KEY_TABLE      = intPreferencesKey("table")
+    private val KEY_EMPRESA    = stringPreferencesKey("empresa")
+    private val KEY_API_TOKEN  = stringPreferencesKey("api_token")
+    private val KEY_USUARIO    = stringPreferencesKey("usuario")
+    // >>> NOVO: base dinÃ¢mica (online x local)
+    private val KEY_BASE_URL   = stringPreferencesKey("base_url")
+
+    /* ====== gravaÃ§Ã£o ====== */
+    suspend fun setRole(ctx: Context, role: DeviceRole) {
+        ctx.dataStore.edit { p ->
+            p[KEY_ROLE] = role.name
+            if (role == DeviceRole.BALCAO) p.remove(KEY_TABLE)
+        }
+    }
+
+    suspend fun setTable(ctx: Context, numeroMesa: Int) {
+        ctx.dataStore.edit { p ->
+            p[KEY_ROLE] = DeviceRole.MESA.name
+            p[KEY_TABLE] = numeroMesa.coerceIn(1, 999)
+        }
+    }
+
+    suspend fun saveMesa(ctx: Context, numeroMesa: Int) = setTable(ctx, numeroMesa)
+    suspend fun saveBalcao(ctx: Context) = setRole(ctx, DeviceRole.BALCAO)
+
+    suspend fun saveEmpresa(ctx: Context, empresa: String) {
+        ctx.dataStore.edit { it[KEY_EMPRESA] = empresa.lowercase() }
+    }
+
+    suspend fun saveApiToken(ctx: Context, token: String) {
+        ctx.dataStore.edit { it[KEY_API_TOKEN] = token }
+    }
+
+    suspend fun saveUsuario(ctx: Context, usuario: String) {
+        ctx.dataStore.edit { it[KEY_USUARIO] = usuario }
+    }
+
+    // >>> NOVO: gravar base URL (ex.: https://painel.tolon.com.br/ ou http://192.168.0.10/)
+    suspend fun saveBaseUrl(ctx: Context, url: String) {
+        ctx.dataStore.edit { it[KEY_BASE_URL] = url.trim() }
+    }
+
+    /* ====== observaÃ§Ã£o ====== */
+    fun observeRole(ctx: Context): Flow<DeviceRole> =
+        ctx.dataStore.data
+            .map { p ->
+                val name = p[KEY_ROLE] ?: DeviceRole.MESA.name
+                runCatching { DeviceRole.valueOf(name) }.getOrDefault(DeviceRole.MESA)
+            }.distinctUntilChanged()
+
+    fun observeTable(ctx: Context): Flow<Int> =
+        ctx.dataStore.data.map { it[KEY_TABLE] ?: 1 }.distinctUntilChanged()
+
+    fun observeEmpresa(ctx: Context): Flow<String?> =
+        ctx.dataStore.data.map { it[KEY_EMPRESA] }.distinctUntilChanged()
+
+    fun observeApiToken(ctx: Context): Flow<String?> =
+        ctx.dataStore.data.map { it[KEY_API_TOKEN] }.distinctUntilChanged()
+
+    fun observeUsuario(ctx: Context): Flow<String?> =
+        ctx.dataStore.data.map { it[KEY_USUARIO] }.distinctUntilChanged()
+
+    // >>> NOVO: observar base URL atual
+    fun observeBaseUrl(ctx: Context): Flow<String?> =
+        ctx.dataStore.data.map { it[KEY_BASE_URL] }.distinctUntilChanged()
+
+    /* ====== leituras uma vez ====== */
+    suspend fun getRoleOnce(ctx: Context): DeviceRole {
+        val name = ctx.dataStore.data.first()[KEY_ROLE] ?: DeviceRole.MESA.name
+        return runCatching { DeviceRole.valueOf(name) }.getOrDefault(DeviceRole.MESA)
+    }
+
+    suspend fun getTableOnce(ctx: Context): Int =
+        ctx.dataStore.data.first()[KEY_TABLE] ?: 1
+
+    suspend fun getEmpresaOnce(ctx: Context): String =
+        ctx.dataStore.data.first()[KEY_EMPRESA] ?: BuildConfig.DEFAULT_EMPRESA
+
+    suspend fun getApiTokenOnce(ctx: Context): String? =
+        ctx.dataStore.data.first()[KEY_API_TOKEN]
+
+    suspend fun getUsuarioOnce(ctx: Context): String? =
+        ctx.dataStore.data.first()[KEY_USUARIO]
+
+    // >>> NOVO: ler base URL (fallback: BuildConfig.API_BASE_URL)
+    suspend fun getBaseUrlOnce(ctx: Context): String =
+        ctx.dataStore.data.first()[KEY_BASE_URL] ?: BuildConfig.API_BASE_URL
+
+    suspend fun isConfigured(ctx: Context): Boolean {
+        val p = ctx.dataStore.data.first()
+        val role = p[KEY_ROLE]
+        return role == DeviceRole.BALCAO.name ||
+                (role == DeviceRole.MESA.name && p[KEY_TABLE] != null)
+    }
+
+    suspend fun isAuthenticated(ctx: Context): Boolean {
+        val p = ctx.dataStore.data.first()
+        val emp = p[KEY_EMPRESA]
+        val tok = p[KEY_API_TOKEN]
+        return !emp.isNullOrBlank() && !tok.isNullOrBlank()
+    }
+
+    suspend fun clear(ctx: Context) { ctx.dataStore.edit { it.clear() } }
+
+    suspend fun clearAuth(ctx: Context) {
+        ctx.dataStore.edit {
+            it.remove(KEY_EMPRESA)
+            it.remove(KEY_API_TOKEN)
+            it.remove(KEY_USUARIO)
+        }
+    }
+}
+
+
+
+
+==== app\src\main\java\com\helptech\abraham\ui\SetupScreen.kt ====
+
+package com.helptech.abraham.ui
+
+import androidx.compose.foundation.layout.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.unit.dp
+import com.helptech.abraham.Env
+import com.helptech.abraham.integracao.IntegracaoService
+import com.helptech.abraham.integracao.getAndroidId
+import com.helptech.abraham.settings.AppSettings
+import com.helptech.abraham.settings.DeviceRole
+import kotlinx.coroutines.launch
+
+@Composable
+fun SetupScreen(
+    onConfigured: () -> Unit
+) {
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+
+    var empresa by remember { mutableStateOf(TextFieldValue("")) }
+    var nomeDisp by remember { mutableStateOf(TextFieldValue("POS")) }
+
+    // Usa serial fixo no dev; se null, pega o ANDROID_ID do dispositivo
+    val serialParaAuth = remember { Env.DEV_FORCE_SERIAL ?: getAndroidId(ctx) }
+
+    var loading by remember { mutableStateOf(false) }
+    var msg by remember { mutableStateOf<String?>(null) }
+
+    fun autenticar() {
+        loading = true
+        msg = null
+        scope.launch {
+            try {
+                val resp = IntegracaoService.authDevice(
+                    serialNumber = serialParaAuth,
+                    nome = nomeDisp.text.ifBlank { "POS" }
+                )
+
+                if (!resp.sucesso) {
+                    msg = resp.mensagem ?: "Equipamento nÃ£o habilitado."
+                    loading = false
+                    return@launch
+                }
+
+                // Empresa final: prioriza servidor; senÃ£o o digitado; senÃ£o default
+                val empresaFinal = (resp.empresa ?: empresa.text.ifBlank { Env.DEFAULT_EMPRESA }).lowercase()
+
+                // Persiste no DataStore
+                AppSettings.saveEmpresa(ctx, empresaFinal)
+                resp.token?.let { AppSettings.saveApiToken(ctx, it) }
+
+                // Preenche o ambiente em runtime
+                Env.RUNTIME_EMPRESA = empresaFinal
+                Env.RUNTIME_USUARIO = resp.usuario ?: ""
+                Env.RUNTIME_TOKEN   = resp.token ?: ""
+
+                // Papel padrÃ£o: BALCÃƒO
+                AppSettings.setRole(ctx, DeviceRole.BALCAO)
+
+                onConfigured()
+            } catch (t: Throwable) {
+                msg = "Falha ao autenticar: ${t.message}"
+            } finally {
+                loading = false
+            }
+        }
+    }
+
+    Surface(Modifier.fillMaxSize()) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(24.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text("Configurar dispositivo", style = MaterialTheme.typography.titleLarge)
+
+                OutlinedTextField(
+                    value = empresa,
+                    onValueChange = { empresa = it },
+                    label = { Text("Empresa (tenant)") },
+                    singleLine = true
+                )
+
+                OutlinedTextField(
+                    value = nomeDisp,
+                    onValueChange = { nomeDisp = it },
+                    label = { Text("Nome do dispositivo") },
+                    singleLine = true
+                )
+
+                OutlinedTextField(
+                    value = TextFieldValue(serialParaAuth),
+                    onValueChange = {},
+                    enabled = false,
+                    label = { Text("Serial (ANDROID_ID)") },
+                    singleLine = true
+                )
+
+                if (msg != null) {
+                    Text(
+                        text = msg!!,
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
+
+                Button(
+                    onClick = { autenticar() },
+                    enabled = !loading
+                ) {
+                    if (loading) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            strokeWidth = 2.dp
+                        )
+                        Spacer(Modifier.width(8.dp))
+                    }
+                    Text("Autenticar")
+                }
+            }
+        }
+    }
+}
+
+
+
+
+==== app\src\main\java\com\helptech\abraham\ui\theme\ApiPlayground.kt ====
+
+package com.helptech.abraham.ui.theme
+
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Divider
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.LocalTextStyle
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import coil.compose.AsyncImage
+import com.google.gson.Gson
+import com.google.gson.GsonBuilder
+import com.google.gson.JsonArray
+import com.google.gson.JsonElement
+import com.google.gson.JsonObject
+import com.google.gson.JsonParser
+import com.google.gson.reflect.TypeToken
+import com.helptech.abraham.BuildConfig
+import com.helptech.abraham.data.remote.*
+import com.helptech.abraham.data.remote.enviarPedido as enviarPedidoRemote
+import com.helptech.abraham.data.remote.preco
+import com.helptech.abraham.integracao.IntegracaoService
+import com.helptech.abraham.network.AdicionaisRepo
+import com.helptech.abraham.network.AdicionaisService
+import com.helptech.abraham.network.buscarFotoPrincipal
+import com.helptech.abraham.settings.AppSettings
+import com.helptech.abraham.settings.DeviceRole
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+
+/* =========================================================
+ *  Cores / Constantes
+ * ========================================================= */
+
+private val Orange     = Color(0xFFF57C00)
+private val PanelBg    = Color(0xFF1F2226)
+private val CardBg     = Color(0xFF24262B)
+private val CardAltBg  = Color(0xFF2A2D33)
+private val Muted      = Color(0xFFB8BEC6)
+private val DividerClr = Color(0x33222222)
+
+private const val ADMIN_PIN = "1234"
+
+/* =========================================================
+ *  Telas locais
+ * ========================================================= */
+private enum class Screen { MENU, CART }
+
+/* =========================================================
+ *  MODELOS DE CARRINHO (com adicionais)
+ * ========================================================= */
+
+data class CartItem(
+    val key: String,
+    val produto: ProdutoDto,
+    var quantidade: Int,
+    val adicionais: List<OpcaoAdicionalDto>
+)
+
+private fun adicionalUnit(item: CartItem): Double =
+    item.adicionais.sumOf { it.preco }
+
+private fun unitPrice(item: CartItem): Double =
+    (item.produto.valor ?: 0.0) + adicionalUnit(item)
+
+private fun lineTotal(item: CartItem): Double =
+    unitPrice(item) * item.quantidade
+
+private fun cartKey(produto: ProdutoDto, adicionais: List<OpcaoAdicionalDto>): String {
+    val addKey = adicionais.map { it.codigo }.sorted().joinToString("-")
+    return "${produto.codigo}|$addKey"
+}
+
+/* =========================================================
+ *  Helpers de JSON seguro (evita crashes)
+ * ========================================================= */
+
+private fun JsonElement?.asStringOrNull(): String? =
+    if (this != null && this.isJsonPrimitive && this.asJsonPrimitive.isString) this.asString else null
+
+private fun JsonElement?.asDoubleOrNull(): Double? =
+    if (this != null && this.isJsonPrimitive && this.asJsonPrimitive.isNumber) this.asDouble else null
+
+private fun JsonElement?.asBooleanOrNull(): Boolean? =
+    if (this != null && this.isJsonPrimitive && this.asJsonPrimitive.isBoolean) this.asBoolean else null
+
+private fun JsonElement?.asJsonObjectOrNull(): JsonObject? =
+    if (this != null && this.isJsonObject) this.asJsonObject else null
+
+private fun JsonElement?.asJsonArrayOrNull(): JsonArray? =
+    if (this != null && this.isJsonArray) this.asJsonArray else null
+
+// ---- Extras para desarmar BOM e JSON "dentro de string"
+private fun String.stripBom(): String =
+    if (isNotEmpty() && this[0] == '\uFEFF') substring(1) else this
+
+private fun parseJson(s: String): JsonElement? =
+    runCatching { JsonParser.parseString(s) }.getOrNull()
+
+private fun unwrapToJsonObject(any: Any?): JsonObject? = when (any) {
+    is JsonObject -> any
+    is JsonElement -> try { any.asJsonObject } catch (_: Exception) {
+        if (any.isJsonPrimitive && any.asJsonPrimitive.isString)
+            parseJson(any.asString.stripBom())?.asJsonObjectOrNull()
+        else null
+    }
+    is String -> {
+        val first = parseJson(any.stripBom())
+        when {
+            first == null -> null
+            first.isJsonObject -> first.asJsonObject
+            first.isJsonPrimitive && first.asJsonPrimitive.isString ->
+                parseJson(first.asString.stripBom())?.asJsonObjectOrNull()
+            else -> null
+        }
+    }
+    else -> null
+}
+
+/* =========================================================
+ *  Carrinho
+ * ========================================================= */
+
+@Composable
+private fun CartPage(
+    itens: List<CartItem>,
+    onAdd: (CartItem) -> Unit,
+    onRemove: (CartItem) -> Unit,
+    onBack: () -> Unit,
+    onConfirm: () -> Unit,
+    obsText: String,
+    onObsChange: (String) -> Unit
+) {
+    val total = itens.sumOf { lineTotal(it) }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(PanelBg)
+            .padding(16.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                "Seu carrinho",
+                color = Color.White,
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold
+            )
+            TextButton(
+                onClick = onBack,
+                colors = ButtonDefaults.textButtonColors(contentColor = Orange)
+            ) { Text("Voltar") }
+        }
+        Divider(color = DividerClr)
+        Spacer(Modifier.height(12.dp))
+
+        if (itens.isEmpty()) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text("Seu carrinho estÃ¡ vazio.", color = Muted)
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                items(itens, key = { it.key }) { item ->
+                    CartRowOrange(
+                        item = item,
+                        onAdd = { onAdd(item) },
+                        onRemove = { onRemove(item) }
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(12.dp))
+            Text(
+                "ObservaÃ§Ãµes do pedido",
+                color = Color.White,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.SemiBold
+            )
+            Spacer(Modifier.height(6.dp))
+            OutlinedTextField(
+                value = obsText,
+                onValueChange = onObsChange,
+                placeholder = { Text("ex.: tirar cebola, cortar ao meio, etc.") },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 64.dp),
+                maxLines = 4,
+                textStyle = LocalTextStyle.current.copy(color = Color.White),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedTextColor = Color.White,
+                    unfocusedTextColor = Color.White,
+                    cursorColor = Orange,
+                    focusedBorderColor = Orange,
+                    unfocusedBorderColor = Color(0xFF4B4F57),
+                    focusedPlaceholderColor = Muted,
+                    unfocusedPlaceholderColor = Muted,
+                    focusedContainerColor = Color(0xFF2D3238),
+                    unfocusedContainerColor = Color(0xFF2D3238),
+                    disabledContainerColor = Color(0xFF2D3238)
+                )
+            )
+
+            Spacer(Modifier.height(12.dp))
+            Divider(color = DividerClr)
+            Spacer(Modifier.height(8.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Total", color = Muted, fontWeight = FontWeight.SemiBold)
+                Text(formatMoneyLocal(total), color = Color.White, fontWeight = FontWeight.ExtraBold)
+            }
+
+            Spacer(Modifier.height(12.dp))
+            Button(
+                onClick = onConfirm,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp),
+                enabled = itens.isNotEmpty(),
+                colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Color.White),
+                shape = MaterialTheme.shapes.large
+            ) { Text("Confirmar pedido", fontWeight = FontWeight.SemiBold) }
+        }
+    }
+}
+
+@Composable
+private fun CartRowOrange(
+    item: CartItem,
+    onAdd: () -> Unit,
+    onRemove: () -> Unit
+) {
+    val produto = item.produto
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(MaterialTheme.shapes.medium)
+            .background(CardBg)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(48.dp)
+                .clip(MaterialTheme.shapes.small)
+                .background(Color(0xFF343A40)),
+            contentAlignment = Alignment.Center
+        ) {
+            var fotoUrl by remember(produto.codigo) { mutableStateOf<String?>(null) }
+            LaunchedEffect(produto.codigo) {
+                fotoUrl = try { buscarFotoPrincipal(produto.codigo) } catch (_: Exception) { null }
+            }
+
+            val fotoOrig = produto.foto
+            val isUrlOrig = !fotoOrig.isNullOrBlank() &&
+                    (fotoOrig.startsWith("http", true) || fotoOrig.startsWith("https", true))
+
+            when {
+                !fotoUrl.isNullOrBlank() -> AsyncImage(
+                    model = fotoUrl, contentDescription = null,
+                    modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop
+                )
+                isUrlOrig -> AsyncImage(
+                    model = fotoOrig, contentDescription = null,
+                    modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop
+                )
+                !fotoOrig.isNullOrBlank() -> {
+                    val img = base64ToImageBitmapOrNull(fotoOrig)
+                    if (img != null) {
+                        Image(
+                            bitmap = img, contentDescription = null,
+                            modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop
+                        )
+                    }
+                }
+            }
+        }
+
+        Spacer(Modifier.width(10.dp))
+
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                produto.nome,
+                color = Color.White,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1
+            )
+            Text(
+                "UnitÃ¡rio: ${formatMoneyLocal(produto.valor)}",
+                color = Muted,
+                style = MaterialTheme.typography.bodySmall
+            )
+
+            if (item.adicionais.isNotEmpty()) {
+                Spacer(Modifier.height(4.dp))
+                val adicionaisTexto = item.adicionais.joinToString(" Â· ") { op ->
+                    val nome = op.nome ?: "OpÃ§Ã£o"
+                    val v = op.preco
+                    if (v > 0.0) "$nome (+ ${formatMoneyLocal(v)})" else nome
+                }
+                Text(
+                    adicionaisTexto,
+                    color = Color(0xFFDFE3EA),
+                    style = MaterialTheme.typography.bodySmall
+                )
+
+                val acrescimo = adicionalUnit(item)
+                if (acrescimo > 0.0) {
+                    Text(
+                        "Adicionais: + ${formatMoneyLocal(acrescimo)}",
+                        color = Orange,
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
+        }
+
+        Stepper(value = item.quantidade, onMinus = onRemove, onPlus = onAdd)
+
+        Spacer(Modifier.width(12.dp))
+
+        Text(
+            formatMoneyLocal(lineTotal(item)),
+            color = Orange, fontWeight = FontWeight.Black
+        )
+    }
+}
+
+@Composable
+private fun Stepper(value: Int, onMinus: () -> Unit, onPlus: () -> Unit) {
+    Surface(shape = CircleShape, color = Color.Transparent, border = BorderStroke(1.dp, Orange)) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.height(34.dp)) {
+            IconButton(onClick = onMinus, modifier = Modifier.size(34.dp)) {
+                androidx.compose.material3.Icon(
+                    Icons.Filled.Remove, contentDescription = "Diminuir", tint = Color.White
+                )
+            }
+            Text(text = value.toString(), color = Color.White, modifier = Modifier.widthIn(min = 24.dp))
+            IconButton(onClick = onPlus, modifier = Modifier.size(34.dp)) {
+                androidx.compose.material3.Icon(
+                    Icons.Filled.Add, contentDescription = "Aumentar", tint = Color.White
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun IconButton(onClick: () -> Unit, modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+    androidx.compose.material3.IconButton(onClick = onClick, modifier = modifier, content = content)
+}
+
+private fun formatMoneyLocal(valor: Double?): String {
+    val v = valor ?: 0.0
+    return "R$ " + "%,.2f".format(v).replace(',', 'X').replace('.', ',').replace('X', '.')
+}
+
+@Composable
+private fun base64ToImageBitmapOrNull(@Suppress("UNUSED_PARAMETER") base64: String)
+        : androidx.compose.ui.graphics.ImageBitmap? = null
+
+/* =========================================================
+ *  Playground
+ * ========================================================= */
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ApiPlayground() {
+    val ctx = LocalContext.current
+
+    val role by AppSettings.observeRole(ctx).collectAsState(initial = DeviceRole.MESA)
+    val tableNumber by AppSettings.observeTable(ctx).collectAsState(initial = 1)
+    val mesaLabel = if (role == DeviceRole.BALCAO) "BALCÃƒO" else "MESA $tableNumber"
+
+    val empresa = BuildConfig.API_EMPRESA.uppercase()
+    val headerLabel = "$empresa Â· $mesaLabel"
+
+    var produtos by remember { mutableStateOf<List<ProdutoDto>>(emptyList()) }
+    var loading by remember { mutableStateOf(true) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var screen by remember { mutableStateOf(Screen.MENU) }
+
+    val cart = remember { mutableStateMapOf<String, CartItem>() }
+    val cartCount by remember { derivedStateOf { cart.values.sumOf { it.quantidade } } }
+
+    var cartObs by rememberSaveable { mutableStateOf("") }
+
+    val scope = rememberCoroutineScope()
+    var submitting by remember { mutableStateOf(false) }
+    var statusMsg by remember { mutableStateOf<String?>(null) }
+
+    var reloadKey by remember { mutableStateOf(0) }
+
+    var detalheProduto by remember { mutableStateOf<ProdutoDto?>(null) }
+    var detalheGrupos by remember { mutableStateOf<List<GrupoAdicionalDto>>(emptyList()) }
+    var carregandoAdicionais by remember { mutableStateOf(false) }
+
+    var showMesaDialog by remember { mutableStateOf(false) }
+
+    var myBillJson by remember { mutableStateOf<JsonObject?>(null) }
+    val prettyGson: Gson = remember { GsonBuilder().setPrettyPrinting().create() }
+
+    // Carrega produtos
+    LaunchedEffect(reloadKey) {
+        val body = mapOf(
+            "item_adicional" to "",
+            "n_categoria_codigo" to "",
+            "codigo" to "",
+            "codigo_empresa" to "",
+            "ativo" to "S"
+        )
+        loading = true
+        error = null
+
+        val env: ApiEnvelope = runCatching {
+            withContext(Dispatchers.IO) {
+                AkitemClient.api.call(
+                    empresa = null,
+                    modulo = "produto",
+                    funcao = "consultar",
+                    body = body
+                )
+            }
+        }.onFailure { e ->
+            error = e.message ?: "Falha desconhecida"
+            loading = false
+        }.getOrElse { return@LaunchedEffect }
+
+        env.erro?.let {
+            error = it
+            loading = false
+            return@LaunchedEffect
+        }
+
+        val listType = object : TypeToken<List<ProdutoDto>>() {}.type
+        val todos: List<ProdutoDto> = withContext(Dispatchers.Default) {
+            Gson().fromJson(env.sucesso, listType) ?: emptyList()
+        }
+        produtos = todos
+        loading = false
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFF2B2F33))
+    ) {
+        when {
+            loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator()
+            }
+            error != null -> Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(24.dp),
+                verticalArrangement = Arrangement.Center,
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(text = error ?: "Sem dados", color = MaterialTheme.colorScheme.error)
+                Spacer(Modifier.height(12.dp))
+                Button(onClick = { reloadKey++ }) { Text("Tentar novamente") }
+            }
+            else -> when (screen) {
+                Screen.MENU -> {
+                    RestaurantMenuColumnsScreen(
+                        produtos = produtos,
+                        onAddToCart = { p: ProdutoDto ->
+                            detalheProduto = p
+                            val locais = AdicionaisRepo.fromProduto(p)
+                            if (locais.isNotEmpty()) {
+                                detalheGrupos = locais
+                                carregandoAdicionais = false
+                            } else {
+                                carregandoAdicionais = true
+                                scope.launch {
+                                    detalheGrupos = AdicionaisService.consultarAdicionais(p.codigo)
+                                    carregandoAdicionais = false
+                                }
+                            }
+                        },
+                        mesaLabel = headerLabel,
+                        cartCount = cartCount,
+                        onCartClick = { screen = Screen.CART },
+                        onCallWaiter = {
+                            scope.launch {
+                                submitting = true
+                                val r = chamarGarcom(mesaLabel)
+                                r.onSuccess {
+                                    statusMsg = "Chamado enviado! Um garÃ§om irÃ¡ atÃ© $headerLabel."
+                                }.onFailure { e ->
+                                    statusMsg = "NÃ£o consegui chamar o garÃ§om: ${e.message ?: "verifique conexÃ£o/endpoint"}"
+                                }
+                                submitting = false
+                            }
+                        },
+                        onMyBill = {
+                            scope.launch {
+                                submitting = true
+
+                                // usa a mesa/conta atual
+                                val contaStr = if (role == DeviceRole.BALCAO)
+                                    "BALCÃƒO"
+                                else
+                                    (tableNumber ?: 1).toString()
+
+                                val result = runCatching {
+                                    IntegracaoService.consultarConsumoJson(contaStr)
+                                }.fold(
+                                    onSuccess = { it },
+                                    onFailure = { e ->
+                                        submitting = false
+                                        statusMsg = "NÃ£o consegui consultar a conta: ${e.message ?: "verifique conexÃ£o/endpoint"}"
+                                        return@launch
+                                    }
+                                )
+
+                                result
+                                    .onSuccess { obj ->
+                                        myBillJson = obj
+                                        if (obj == null) {
+                                            statusMsg = "Consulta ok, mas nÃ£o recebi um objeto JSON vÃ¡lido para exibir."
+                                        }
+                                    }
+                                    .onFailure { e ->
+                                        statusMsg = "NÃ£o consegui consultar a conta: ${e.message ?: "verifique conexÃ£o/endpoint"}"
+                                    }
+
+                                submitting = false
+                            }
+                        },
+                                onOpenMesaDialog = { showMesaDialog = true }
+                    )
+                }
+                Screen.CART -> {
+                    val itens: List<CartItem> = remember(cart.toMap()) {
+                        cart.values.toList()
+                    }
+                    CartPage(
+                        itens = itens,
+                        onAdd = { it ->
+                            cart[it.key] = it.copy(quantidade = it.quantidade + 1)
+                        },
+                        onRemove = { it ->
+                            val q = it.quantidade - 1
+                            if (q <= 0) cart.remove(it.key) else cart[it.key] = it.copy(quantidade = q)
+                        },
+                        onBack = { screen = Screen.MENU },
+                        onConfirm = {
+                            if (itens.isEmpty()) return@CartPage
+                            scope.launch {
+                                submitting = true
+
+                                val agrupado: Map<Int, Int> = itens
+                                    .groupBy { it.produto.codigo }
+                                    .mapValues { (_, list) -> list.sumOf { it.quantidade } }
+
+                                val itensReq: List<ItemPedidoReq> = agrupado.map { (codigo, qtde) ->
+                                    val produto = produtos.first { it.codigo == codigo }
+                                    ItemPedidoReq(
+                                        codigoProduto = codigo,
+                                        quantidade   = qtde,
+                                        valorUnit    = produto.valor ?: 0.0
+                                    )
+                                }
+
+                                val result = enviarPedidoRemote(
+                                    mesaLabel = mesaLabel,
+                                    itens = itensReq,
+                                    tipoEntregaCodigo = "2",
+                                    formaPgtoCodigo = "1",
+                                    obsPedido = cartObs
+                                )
+
+                                result
+                                    .onSuccess { el: JsonElement? ->
+                                        val pedidoId = when {
+                                            el == null -> null
+                                            el.isJsonPrimitive -> el.asString
+                                            el.isJsonObject && el.asJsonObject.has("codigo") ->
+                                                el.asJsonObject.get("codigo").asString
+                                            else -> null
+                                        }
+                                        statusMsg = if (pedidoId.isNullOrBlank())
+                                            "Pedido enviado com sucesso!"
+                                        else
+                                            "Pedido enviado com sucesso! NÂº: $pedidoId"
+
+                                        cart.clear()
+                                        cartObs = ""
+                                        screen = Screen.MENU
+                                    }
+                                    .onFailure { e: Throwable ->
+                                        statusMsg = "Falha ao enviar pedido: ${e.message ?: "erro desconhecido"}"
+                                    }
+
+                                submitting = false
+                            }
+                        },
+                        obsText = cartObs,
+                        onObsChange = { cartObs = it }
+                    )
+
+                    if (submitting) {
+                        Box(
+                            Modifier
+                                .fillMaxSize()
+                                .background(Color(0x66000000)),
+                            contentAlignment = Alignment.Center
+                        ) { CircularProgressIndicator() }
+                    }
+                }
+            }
+        }
+
+        // Sheet de detalhe
+        val produtoSheet = detalheProduto
+        if (produtoSheet != null) {
+            if (carregandoAdicionais) {
+                LoadingBottomSheet(onDismiss = { detalheProduto = null })
+            } else {
+                ProductDetailSheet(
+                    produto = produtoSheet,
+                    grupos = detalheGrupos,
+                    onDismiss = { detalheProduto = null },
+                    onConfirm = { escolhido ->
+                        val selecionadas = escolhido.escolhas.values.flatten()
+                        val key = cartKey(produtoSheet, selecionadas)
+
+                        val atual = cart[key]
+                        if (atual == null) {
+                            cart[key] = CartItem(
+                                key = key,
+                                produto = produtoSheet,
+                                quantidade = escolhido.quantidade,
+                                adicionais = selecionadas
+                            )
+                        } else {
+                            cart[key] = atual.copy(quantidade = atual.quantidade + escolhido.quantidade)
+                        }
+                        detalheProduto = null
+                    }
+                )
+            }
+        }
+    }
+
+    if (statusMsg != null) {
+        AlertDialog(
+            onDismissRequest = { statusMsg = null },
+            confirmButton = { TextButton(onClick = { statusMsg = null }) { Text("OK") } },
+            title = { Text("Status") },
+            text = { Text(statusMsg ?: "") }
+        )
+    }
+
+    // DiÃ¡logo "Minha conta" â€” versÃ£o redesenhada
+    myBillJson?.let { obj ->
+        MyBillDialog(
+            root = obj,
+            onDismiss = { myBillJson = null }
+        )
+    }
+
+    // DiÃ¡logo de troca de mesa
+    if (showMesaDialog) {
+        MesaOptionsDialog(
+            currentTable = tableNumber ?: 1,
+            onDismiss = { showMesaDialog = false },
+            onConfirm = { novaMesa ->
+                scope.launch {
+                    AppSettings.saveMesa(ctx, novaMesa) // usa o ctx capturado (evita erro de @Composable)
+                    showMesaDialog = false
+                }
+            }
+        )
+    }
+}
+
+/* ----------- "Minha conta" â€“ diÃ¡logo com melhor visual ----------- */
+
+@Composable
+private fun MyBillDialog(root: JsonObject, onDismiss: () -> Unit) {
+    // Paleta clara local (independe do tema escuro do app)
+    val Panel        = Color(0xFFF7F8FA)
+    val Card         = Color.White
+    val CardAlt      = Color(0xFFF1F3F6)
+    val TextPrimary  = Color(0xFF111827)
+    val TextSecondary= Color(0xFF6B7280)
+    val LightDivider = Color(0xFFE5E7EB)
+
+    val conta = root.get("Conta").asStringOrNull()
+    val cliente = root.get("Cliente").asJsonObjectOrNull()
+    val nome = cliente?.get("Nome").asStringOrNull()
+    val doc  = cliente?.get("Documento").asStringOrNull()
+    val tel  = cliente?.get("Telefone").asStringOrNull()
+
+    val taxaRemovida = cliente?.get("TaxaServicoRemovida").asBooleanOrNull() ?: false
+    val taxa     = cliente?.get("TaxaServico").asDoubleOrNull()
+    val descontos= cliente?.get("ValorDescontos").asDoubleOrNull()
+    val brindes  = cliente?.get("ValorBrindes").asDoubleOrNull()
+    val consMin  = cliente?.get("ConsumacaoMinima").asDoubleOrNull()
+    val total    = cliente?.get("Total").asDoubleOrNull()
+
+    val itens = root.get("Itens").asJsonArrayOrNull()
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = { TextButton(onClick = onDismiss) { Text("OK") } },
+        title = { Text("Minha conta", color = TextPrimary, fontWeight = FontWeight.Bold) },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 0.dp, max = 520.dp)
+            ) {
+                // CabeÃ§alho
+                Surface(
+                    color = Card,
+                    shape = MaterialTheme.shapes.large,
+                    border = BorderStroke(1.dp, LightDivider),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(Modifier.padding(14.dp)) {
+                        if (!conta.isNullOrBlank()) {
+                            Text(conta, color = TextPrimary, fontWeight = FontWeight.Bold)
+                        }
+                        val linha2 = listOfNotNull(nome, doc, tel).joinToString(" Â· ")
+                        if (linha2.isNotBlank()) {
+                            Spacer(Modifier.height(4.dp))
+                            Text(linha2, color = TextSecondary, style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(12.dp))
+
+                // Resumo
+                Surface(
+                    color = Card,
+                    shape = MaterialTheme.shapes.large,
+                    border = BorderStroke(1.dp, LightDivider),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(Modifier.padding(14.dp)) {
+                        Text("Resumo", color = TextPrimary, fontWeight = FontWeight.SemiBold)
+                        Spacer(Modifier.height(8.dp))
+
+                        @Composable
+                        fun Line(
+                            label: String,
+                            value: String,
+                            strong: Boolean = false,
+                            muted: Boolean = false
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    label,
+                                    color = if (muted) TextSecondary.copy(alpha = 0.6f) else TextSecondary,
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                                Text(
+                                    value,
+                                    color = if (strong) Orange else TextPrimary,
+                                    fontWeight = if (strong) FontWeight.ExtraBold else FontWeight.SemiBold
+                                )
+                            }
+                        }
+
+                        taxa?.let {
+                            Line(
+                                "Taxa de serviÃ§o" + if (taxaRemovida) " (removida)" else "",
+                                formatMoneyLocal(it),
+                                muted = taxaRemovida
+                            )
+                        }
+                        descontos?.takeIf { it != 0.0 }?.let { Line("Descontos", "- ${formatMoneyLocal(it)}") }
+                        brindes?.takeIf { it != 0.0 }?.let { Line("Brindes", "- ${formatMoneyLocal(it)}") }
+                        consMin?.takeIf { it != 0.0 }?.let { Line("ConsumaÃ§Ã£o mÃ­nima", formatMoneyLocal(it)) }
+
+                        Divider(Modifier.padding(vertical = 8.dp), color = LightDivider)
+                        Line("Total", formatMoneyLocal(total), strong = true)
+                    }
+                }
+
+                // Itens
+                if (itens != null && itens.size() > 0) {
+                    Spacer(Modifier.height(12.dp))
+                    Text("Itens", color = TextPrimary, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(6.dp))
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 300.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items((0 until itens.size()).toList()) { idx ->
+                            val el = itens.get(idx).asJsonObjectOrNull()
+                            val prod = el?.get("Produto").asStringOrNull() ?: "Item"
+                            val desc = el?.get("Descricao").asStringOrNull()
+                            val qtde = el?.get("Quantidade").asDoubleOrNull()?.toInt() ?: 0
+                            val totalItem = el?.get("ValorTotal").asDoubleOrNull()
+                            val rowBg = if (idx % 2 == 0) Card else CardAlt
+
+                            Surface(
+                                color = rowBg,
+                                shape = MaterialTheme.shapes.medium,
+                                border = BorderStroke(1.dp, LightDivider),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(Modifier.padding(12.dp)) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(prod, color = TextPrimary, fontWeight = FontWeight.SemiBold)
+                                        Text(
+                                            totalItem?.let { formatMoneyLocal(it) } ?: "â€”",
+                                            color = Orange,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                    desc?.takeIf { it.isNotBlank() }?.let {
+                                        Spacer(Modifier.height(2.dp))
+                                        Text(it, color = TextSecondary, style = MaterialTheme.typography.bodySmall)
+                                    }
+                                    Spacer(Modifier.height(6.dp))
+                                    // badge de quantidade
+                                    Surface(
+                                        shape = CircleShape,
+                                        color = Color(0x143B82F6),
+                                        border = BorderStroke(1.dp, Color(0x263B82F6))
+                                    ) {
+                                        Text(
+                                            "Qtd: $qtde",
+                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 2.dp),
+                                            color = Color(0xFF1E40AF),
+                                            style = MaterialTheme.typography.bodySmall,
+                                            fontWeight = FontWeight.Medium
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    Spacer(Modifier.height(10.dp))
+                    Text("Nenhum item encontrado.", color = TextSecondary)
+                }
+            }
+        },
+        containerColor = Panel
+    )
+}
+
+// helper para nÃ£o imprimir linhas â€œ0,00â€
+private fun descontinuos(v: Double) = v != 0.0
+
+/* ----------- Loading sheet ----------- */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun LoadingBottomSheet(onDismiss: () -> Unit) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        dragHandle = { androidx.compose.material3.BottomSheetDefaults.DragHandle() }
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            CircularProgressIndicator()
+            Spacer(Modifier.height(12.dp))
+            Text("Carregando opÃ§Ãµesâ€¦", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(8.dp))
+        }
+    }
+}
+
+/* ----------- DiÃ¡logo de opÃ§Ãµes da mesa (com PIN) ----------- */
+@Composable
+fun MesaOptionsDialog(
+    currentTable: Int,
+    onDismiss: () -> Unit,
+    onConfirm: (Int) -> Unit
+) {
+    var selected by remember { mutableStateOf(currentTable) }
+    var pin by remember { mutableStateOf("") }
+    var showPin by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(dismissOnClickOutside = false, dismissOnBackPress = false)
+    ) {
+        Surface(shape = MaterialTheme.shapes.large, tonalElevation = 2.dp) {
+            Column(Modifier.padding(20.dp)) {
+                Text("OpÃ§Ãµes de mesa", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(12.dp))
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Mesa:", modifier = Modifier.width(64.dp))
+                    OutlinedTextField(
+                        value = selected.toString(),
+                        onValueChange = { v -> v.toIntOrNull()?.let { if (it in 1..999) selected = it } },
+                        singleLine = true,
+                        modifier = Modifier.width(120.dp)
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    FilledTonalButton(onClick = { if (selected < 999) selected++ }) { Text("+") }
+                    Spacer(Modifier.width(4.dp))
+                    FilledTonalButton(onClick = { if (selected > 1) selected-- }) { Text("-") }
+                }
+
+                Spacer(Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = pin,
+                    onValueChange = { pin = it; error = null },
+                    label = { Text("Senha do admin") },
+                    singleLine = true,
+                    visualTransformation = if (showPin) VisualTransformation.None else PasswordVisualTransformation(),
+                    trailingIcon = {
+                        TextButton(onClick = { showPin = !showPin }) { Text(if (showPin) "Ocultar" else "Mostrar") }
+                    }
+                )
+
+                if (!error.isNullOrBlank()) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(error!!, color = MaterialTheme.colorScheme.error)
+                }
+
+                Spacer(Modifier.height(16.dp))
+                Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
+                    TextButton(onClick = onDismiss) { Text("Cancelar") }
+                    Spacer(Modifier.width(8.dp))
+                    Button(onClick = {
+                        if (pin == ADMIN_PIN) onConfirm(selected)
+                        else error = "Senha incorreta."
+                    }) { Text("Trocar de mesa") }
+                }
+            }
+        }
+    }
+}
+
+
+
+
+==== app\src\main\java\com\helptech\abraham\ui\theme\Base64Image.kt ====
+
+package com.helptech.abraham.ui.theme
+
+import android.graphics.BitmapFactory
+import android.util.Base64
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
+
+fun base64ToImageBitmapOrNull(dataUrl: String?): ImageBitmap? {
+    if (dataUrl.isNullOrBlank()) return null
+    val commaIdx = dataUrl.indexOf(",")
+    val pure = if (dataUrl.startsWith("data:") && commaIdx >= 0) {
+        dataUrl.substring(commaIdx + 1)
+    } else dataUrl
+
+    return try {
+        val bytes = Base64.decode(pure, Base64.DEFAULT)
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
+    } catch (_: Throwable) {
+        null
+    }
+}
+
+
+
+
+==== app\src\main\java\com\helptech\abraham\ui\theme\CartSheet.kt ====
+
+//@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+//
+//package com.helptech.abraham.ui.theme
+//
+//import androidx.compose.foundation.background
+//import androidx.compose.foundation.clickable
+//import androidx.compose.foundation.layout.*
+//import androidx.compose.foundation.lazy.LazyColumn
+//import androidx.compose.foundation.lazy.items
+//import androidx.compose.material.icons.Icons
+//import androidx.compose.material.icons.filled.Add
+//import androidx.compose.material.icons.filled.Close
+//import androidx.compose.material.icons.filled.Remove
+//import androidx.compose.material3.*
+//import androidx.compose.runtime.*
+//import androidx.compose.ui.Alignment
+//import androidx.compose.ui.Modifier
+//import androidx.compose.ui.draw.clip
+//import androidx.compose.ui.graphics.Color
+//import androidx.compose.ui.text.font.FontWeight
+//import androidx.compose.ui.text.style.TextOverflow
+//import androidx.compose.ui.unit.dp
+//import androidx.compose.ui.unit.sp
+//import com.helptech.abraham.data.remote.ProdutoDto
+//import java.text.NumberFormat
+//import java.util.Locale
+//
+///* ===== Paleta ===== */
+//private val PanelBg    = Color(0xFF1A1B1F)
+//private val CardBg     = Color(0xFF24262B)
+//private val DividerClr = Color(0xFF2E3036)
+//private val Muted      = Color(0xFF9AA0A6)
+//private val Accent     = Color(0xFF7C4DFF)
+//
+///* ===================== MODELOS (pÃºblicos) ===================== */
+//data class AdicionalEscolhido(
+//    val id: Int,
+//    val nome: String,
+//    val valor: Double = 0.0,
+//    val grupoNome: String? = null,
+//    val isRemocao: Boolean = false,
+//    val isSaborPizza: Boolean = false
+//)
+//
+//data class CartItem(
+//    val produto: ProdutoDto,
+//    val quantidade: Int = 1,
+//    val adicionais: List<AdicionalEscolhido> = emptyList(),
+//    val observacao: String? = null
+//) {
+//    val totalAdicUnit: Double = adicionais.sumOf { it.valor.coerceAtLeast(0.0) }
+//    val precoUnit: Double = (produto.valor ?: 0.0) + totalAdicUnit
+//    val precoLinha: Double = precoUnit * quantidade
+//
+//    fun subtitle(): String {
+//        val sabores = adicionais.filter { it.isSaborPizza }.map { it.nome }
+//        val extras  = adicionais.filter { !it.isSaborPizza && !it.isRemocao }.map { a ->
+//            if (a.valor > 0.0) "+ ${a.nome} (+ ${formatMoneyBr(a.valor)})" else "+ ${a.nome}"
+//        }
+//        val remocoes = adicionais.filter { it.isRemocao }.map { "sem ${it.nome}" }
+//        val partes = buildList {
+//            if (sabores.isNotEmpty()) add(sabores.joinToString(" / "))
+//            addAll(extras); addAll(remocoes)
+//            if (!observacao.isNullOrBlank()) add(observacao!!)
+//        }
+//        return partes.joinToString("  /  ")
+//    }
+//
+//    /** chave Ãºnica pra nÃ£o agrupar itens com opcionais diferentes */
+//    fun signature(): String {
+//        val addKey = adicionais.sortedBy { it.id }
+//            .joinToString("|") { "${it.id}:${it.valor}:${it.isRemocao}:${it.isSaborPizza}" }
+//        return "${produto.codigo}|$addKey|${observacao.orEmpty()}"
+//    }
+//}
+//
+///* ===================== TELA FULL ===================== */
+//@Composable
+//fun CartScreen(
+//    itens: List<CartItem>,
+//    onInc: (CartItem) -> Unit,
+//    onDec: (CartItem) -> Unit,
+//    onBack: () -> Unit,
+//    onCheckout: () -> Unit
+//) {
+//    val total = remember(itens) { itens.sumOf { it.precoLinha } }
+//
+//    Column(
+//        modifier = Modifier
+//            .fillMaxSize()
+//            .background(PanelBg)
+//            .windowInsetsPadding(WindowInsets.systemBars)
+//    ) {
+//        Row(
+//            modifier = Modifier
+//                .fillMaxWidth()
+//                .padding(horizontal = 20.dp, vertical = 12.dp),
+//            verticalAlignment = Alignment.CenterVertically
+//        ) {
+//            Text("Seu carrinho", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 18.sp, modifier = Modifier.weight(1f))
+//            Text("Voltar", color = Color(0xFFBDBDBD), modifier = Modifier.clickable { onBack() })
+//        }
+//        HorizontalDivider(color = DividerClr)
+//
+//        if (itens.isEmpty()) {
+//            Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+//                Text("Seu carrinho estÃ¡ vazio.", color = Muted)
+//            }
+//        } else {
+//            LazyColumn(
+//                modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+//                verticalArrangement = Arrangement.spacedBy(10.dp)
+//            ) {
+//                items(itens, key = { it.signature() }) { item ->
+//                    CartRow(item, onInc = { onInc(item) }, onDec = { onDec(item) })
+//                }
+//            }
+//        }
+//
+//        HorizontalDivider(color = DividerClr)
+//        Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+//            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+//                Text("Total", color = Muted)
+//                Text(formatMoneyBr(total), color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 18.sp)
+//            }
+//            Button(
+//                onClick = onCheckout,
+//                modifier = Modifier.fillMaxWidth().height(48.dp),
+//                colors = ButtonDefaults.buttonColors(containerColor = Accent),
+//                shape = MaterialTheme.shapes.large
+//            ) { Text("Confirmar pedido", color = Color.White, fontWeight = FontWeight.SemiBold) }
+//        }
+//    }
+//}
+//
+///* ===================== SHEET (opcional) ===================== */
+//@Composable
+//fun CartBottomSheet(
+//    itens: List<CartItem>,
+//    onInc: (CartItem) -> Unit,
+//    onDec: (CartItem) -> Unit,
+//    onClose: () -> Unit,
+//    onCheckout: () -> Unit
+//) {
+//    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+//    ModalBottomSheet(
+//        onDismissRequest = onClose,
+//        sheetState = sheetState,
+//        dragHandle = { BottomSheetDefaults.DragHandle() },
+//        containerColor = PanelBg,
+//        tonalElevation = 0.dp
+//    ) {
+//        Column(Modifier.fillMaxWidth().navigationBarsPadding()) {
+//            Row(
+//                modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp),
+//                verticalAlignment = Alignment.CenterVertically
+//            ) {
+//                Text("Seu carrinho", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 18.sp, modifier = Modifier.weight(1f))
+//                IconButton(onClick = onClose) { Icon(Icons.Filled.Close, null, tint = Color.White) }
+//            }
+//            HorizontalDivider(color = DividerClr)
+//
+//            val total = remember(itens) { itens.sumOf { it.precoLinha } }
+//
+//            if (itens.isEmpty()) {
+//                Box(Modifier.fillMaxWidth().heightIn(min = 180.dp).padding(28.dp), contentAlignment = Alignment.Center) {
+//                    Text("Seu carrinho estÃ¡ vazio.", color = Muted)
+//                }
+//            } else {
+//                LazyColumn(
+//                    modifier = Modifier.fillMaxWidth().heightIn(max = 520.dp).padding(horizontal = 16.dp, vertical = 8.dp),
+//                    verticalArrangement = Arrangement.spacedBy(10.dp)
+//                ) {
+//                    items(itens, key = { it.signature() }) { item ->
+//                        CartRow(item, onInc = { onInc(item) }, onDec = { onDec(item) })
+//                    }
+//                }
+//            }
+//
+//            HorizontalDivider(color = DividerClr)
+//            Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+//                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+//                    Text("Total", color = Muted)
+//                    Text(formatMoneyBr(total), color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 18.sp)
+//                }
+//                Button(
+//                    onClick = onCheckout,
+//                    modifier = Modifier.fillMaxWidth().height(48.dp),
+//                    colors = ButtonDefaults.buttonColors(containerColor = Accent),
+//                    shape = MaterialTheme.shapes.large
+//                ) { Text("Confirmar pedido", color = Color.White) }
+//            }
+//        }
+//    }
+//}
+//
+///* ===================== Linha + Stepper ===================== */
+//@Composable
+//private fun CartRow(item: CartItem, onInc: () -> Unit, onDec: () -> Unit) {
+//    Row(
+//        modifier = Modifier.fillMaxWidth().clip(MaterialTheme.shapes.medium).background(CardBg).padding(horizontal = 14.dp, vertical = 12.dp),
+//        verticalAlignment = Alignment.CenterVertically
+//    ) {
+//        Column(Modifier.weight(1f)) {
+//            Text(item.produto.nome, color = Color.White, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+//            val sub = item.subtitle()
+//            if (sub.isNotBlank()) {
+//                Spacer(Modifier.height(2.dp))
+//                Text(sub, color = Muted, fontSize = 12.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
+//            }
+//            Spacer(Modifier.height(4.dp))
+//            Text("UnitÃ¡rio: ${formatMoneyBr(item.precoUnit)}", color = Muted, fontSize = 12.sp)
+//        }
+//        Stepper(quantidade = item.quantidade, onMinus = onDec, onPlus = onInc)
+//        Spacer(Modifier.width(12.dp))
+//        Text(formatMoneyBr(item.precoLinha), color = Color.White, fontWeight = FontWeight.Bold)
+//    }
+//}
+//
+//@Composable
+//private fun Stepper(quantidade: Int, onMinus: () -> Unit, onPlus: () -> Unit) {
+//    Surface(color = Color(0xFF2A2C31), shape = MaterialTheme.shapes.small) {
+//        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)) {
+//            Icon(Icons.Filled.Remove, contentDescription = "Diminuir", tint = Color.White,
+//                modifier = Modifier.size(28.dp).clickable { onMinus() }.padding(4.dp))
+//            Text(quantidade.toString(), color = Color.White, modifier = Modifier.widthIn(min = 28.dp), fontWeight = FontWeight.Medium)
+//            Icon(Icons.Filled.Add, contentDescription = "Aumentar", tint = Color.White,
+//                modifier = Modifier.size(28.dp).clickable { onPlus() }.padding(4.dp))
+//        }
+//    }
+//}
+//
+///* ===================== Helpers ===================== */
+//private val moneyBr: NumberFormat by lazy {
+//    NumberFormat.getCurrencyInstance(Locale("pt", "BR")).apply {
+//        minimumFractionDigits = 2; maximumFractionDigits = 2
+//    }
+//}
+//private fun formatMoneyBr(valor: Double?): String = moneyBr.format(valor ?: 0.0)
+
+
+
+
+==== app\src\main\java\com\helptech\abraham\ui\theme\Color.kt ====
+
+package com.helptech.abraham.ui.theme
+
+import androidx.compose.ui.graphics.Color
+
+val Purple80 = Color(0xFFD0BCFF)
+val PurpleGrey80 = Color(0xFFCCC2DC)
+val Pink80 = Color(0xFFEFB8C8)
+
+val Purple40 = Color(0xFF6650a4)
+val PurpleGrey40 = Color(0xFF625b71)
+val Pink40 = Color(0xFF7D5260)
+
+
+
+==== app\src\main\java\com\helptech\abraham\ui\theme\MenuScreen.kt ====
+
+package com.helptech.abraham.ui.theme
+
+import android.graphics.BitmapFactory
+import android.util.Base64
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.snapshots.SnapshotStateList
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
+import com.helptech.abraham.data.remote.GrupoAdicionalDto
+import com.helptech.abraham.data.remote.ProdutoDto
+import com.helptech.abraham.network.AdicionaisRepo
+import com.helptech.abraham.network.AdicionaisService
+import com.helptech.abraham.network.buscarFotoPrincipal
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
+
+/* ===== Paleta ===== */
+private val Orange     = Color(0xFFF57C00)
+private val MenuBg     = Color(0xFF2B2F33)
+private val PanelBg    = Color(0xFF1F2226)
+private val RailBg     = Color(0xFF1C1F23)
+private val Muted      = Color(0xFFB8BEC6)
+private val CardBg     = Color(0xFF24262B)
+private val DividerClr = Color(0x33222222)
+
+/** Itens para a lista seccionada */
+private sealed interface SectionItem {
+    data class Header(val categoria: String) : SectionItem
+    data class Product(val produto: ProdutoDto) : SectionItem
+}
+
+/* ============================================================
+ * Host (abre sheet, carrega adicionais e confirma seleÃ§Ã£o)
+ * ============================================================ */
+@Composable
+fun MenuScreenHost(
+    produtos: List<ProdutoDto>,
+    mesaLabel: String,
+    cartCount: Int,
+    onCartClick: () -> Unit,
+    onAddConfirm: (ProdutoEscolhido, ProdutoDto) -> Unit,
+    onCallWaiter: (() -> Unit)? = null,
+    onMyBill:   (() -> Unit)? = null
+) {
+    var produtoSel by remember { mutableStateOf<ProdutoDto?>(null) }
+    var gruposSel   by remember(produtoSel) { mutableStateOf<List<GrupoAdicionalDto>?>(null) }
+
+    RestaurantMenuColumnsScreen(
+        produtos = produtos,
+        onAddToCart = { p ->
+            produtoSel = p
+            gruposSel = null
+        },
+        mesaLabel = mesaLabel,
+        cartCount = cartCount,
+        onCartClick = onCartClick,
+        onCallWaiter = onCallWaiter,
+        onMyBill = onMyBill
+    )
+
+    produtoSel?.let { p ->
+        LaunchedEffect(p.codigo) {
+            val locais: List<GrupoAdicionalDto> = AdicionaisRepo.fromProduto(produto = p)
+            gruposSel = if (locais.isNotEmpty()) locais
+            else AdicionaisService.consultarAdicionais(produtoCodigo = p.codigo)
+        }
+
+        val fechar = {
+            produtoSel = null
+            gruposSel = null
+        }
+
+        when (val g = gruposSel) {
+            null -> ProductDetailLoading(onDismiss = fechar)
+            else -> ProductDetailSheet(
+                produto = p,
+                grupos = g,
+                onDismiss = fechar,
+                onConfirm = { escolhas ->
+                    onAddConfirm(escolhas, p)
+                    fechar()
+                }
+            )
+        }
+    }
+}
+
+/** Tela principal (barra + rail + lista) */
+@Composable
+fun RestaurantMenuColumnsScreen(
+    produtos: List<ProdutoDto>,
+    onAddToCart: (ProdutoDto) -> Unit,
+    mesaLabel: String,
+    cartCount: Int,
+    onCartClick: () -> Unit,
+    onCallWaiter: (() -> Unit)? = null,
+    onMyBill:   (() -> Unit)? = null,
+    onOpenMesaDialog: (() -> Unit)? = null
+) {
+    var search by remember { mutableStateOf("") }
+
+    val agrupados: Map<String, List<ProdutoDto>> = remember(produtos) {
+        produtos
+            .filter { it.tipo.equals("PRODUTO", true) || it.tipo.equals("PIZZA", true) }
+            .groupBy { it.categoria_nome?.takeIf { n -> n.isNotBlank() } ?: "Outros" }
+            .toSortedMap(compareBy { it.lowercase() })
+    }
+
+    val categoriasBase = remember(agrupados) {
+        agrupados.keys.filterNot { it.equals("Adicionais", ignoreCase = true) }.toList()
+    }
+
+    var categoriaSel by remember(categoriasBase) { mutableStateOf(categoriasBase.firstOrNull() ?: "") }
+
+    val flatList: List<SectionItem> = remember(agrupados, categoriasBase, search) {
+        val cats = categoriasBase
+        buildList {
+            if (search.isBlank()) {
+                cats.forEach { cat ->
+                    val itens = agrupados[cat].orEmpty()
+                    if (itens.isNotEmpty()) {
+                        add(SectionItem.Header(cat))
+                        itens.forEach { p -> add(SectionItem.Product(p)) }
+                    }
+                }
+            } else {
+                val q = search.trim().lowercase()
+                cats.forEach { cat ->
+                    val itens = agrupados[cat].orEmpty().filter { p ->
+                        p.nome.lowercase().contains(q) ||
+                                (p.descricao?.lowercase()?.contains(q) == true)
+                    }
+                    if (itens.isNotEmpty()) {
+                        add(SectionItem.Header(cat))
+                        itens.forEach { p -> add(SectionItem.Product(p)) }
+                    }
+                }
+            }
+        }
+    }
+
+    val headerIndexByCategory: Map<String, Int> = remember(flatList) {
+        buildMap {
+            flatList.forEachIndexed { idx, item ->
+                if (item is SectionItem.Header) put(item.categoria, idx)
+            }
+        }
+    }
+
+    val listState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
+
+    LaunchedEffect(Unit) {
+        snapshotFlow { listState.firstVisibleItemIndex }
+            .map { firstIdx ->
+                val maxIndex = if (flatList.isNotEmpty()) flatList.lastIndex else 0
+                var idx = firstIdx.coerceIn(0, maxIndex).coerceAtLeastZero()
+                while (idx >= 0 && flatList.getOrNull(idx) !is SectionItem.Header) idx--
+                (flatList.getOrNull(idx) as? SectionItem.Header)?.categoria
+            }
+            .filter { it != null }
+            .distinctUntilChanged()
+            .collectLatest { cat -> categoriaSel = cat!! }
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MenuBg)
+    ) {
+        Spacer(Modifier.height(8.dp))
+
+        TopBarOrange(
+            mesaLabel = mesaLabel,
+            cartCount = cartCount,
+            onCartClick = onCartClick,
+            search = search,
+            onSearchChange = { search = it },
+            onMyBill = onMyBill,
+            onCallWaiter = onCallWaiter,
+            onOpenMesaDialog = onOpenMesaDialog
+        )
+
+        HorizontalDivider(color = DividerClr)
+
+        Row(Modifier.fillMaxSize()) {
+            CategoryRail(
+                categorias = categoriasBase,
+                produtosPorCategoria = agrupados,
+                selecionada = categoriaSel,
+                onSeleciona = { cat ->
+                    categoriaSel = cat
+                    headerIndexByCategory[cat]?.let { headerIdx ->
+                        scope.launch { listState.animateScrollToItem(headerIdx) }
+                    }
+                }
+            )
+
+            SectionedProductList(
+                items = flatList,
+                listState = listState,
+                onAdd = { p -> onAddToCart(p) },
+                modifier = Modifier.weight(1f)
+            )
+        }
+    }
+}
+
+private fun Int.coerceAtLeastZero() = if (this < 0) 0 else this
+
+/* ---------- Top bar ---------- */
+
+@Composable
+private fun TopBarOrange(
+    mesaLabel: String,
+    cartCount: Int,
+    onCartClick: () -> Unit,
+    search: String,
+    onSearchChange: (String) -> Unit,
+    onMyBill: (() -> Unit)?,
+    onCallWaiter: (() -> Unit)?,
+    onOpenMesaDialog: (() -> Unit)? = null
+) {
+    val focus = LocalFocusManager.current
+
+    Surface(color = Orange) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(64.dp)
+                .padding(horizontal = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = mesaLabel,
+                color = Color.White,
+                fontWeight = FontWeight.ExtraBold,
+                fontSize = 16.sp,
+                modifier = Modifier.pointerInput(Unit) {
+                    detectTapGestures(
+                        onLongPress = { onOpenMesaDialog?.invoke() },
+                        onDoubleTap = { onOpenMesaDialog?.invoke() }
+                    )
+                }
+            )
+
+            Spacer(Modifier.width(10.dp))
+
+            SearchField(
+                value = search,
+                onValueChange = onSearchChange,
+                onSearch = { focus.clearFocus() },
+                modifier = Modifier.weight(1f)
+            )
+
+            Spacer(Modifier.width(10.dp))
+            TopChip("MINHA CONTA", onMyBill)
+            Spacer(Modifier.width(8.dp))
+            TopChip("CHAMAR GARÃ‡OM", onCallWaiter)
+            Spacer(Modifier.width(8.dp))
+            TopChip("CARRINHO ($cartCount)") {
+                focus.clearFocus()
+                onCartClick()
+            }
+        }
+    }
+}
+
+@Composable
+private fun SearchField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    onSearch: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    TextField(
+        value = value,
+        onValueChange = onValueChange,
+        placeholder = {
+            Text(
+                "Buscar produtoâ€¦",
+                maxLines = 1,
+                color = Color(0xFF5A5A5A),
+                fontSize = 16.sp
+            )
+        },
+        singleLine = true,
+        leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null, tint = Color(0xFF5A5A5A)) },
+        textStyle = TextStyle(fontSize = 18.sp, lineHeight = 24.sp),
+        keyboardOptions = KeyboardOptions.Default.copy(imeAction = ImeAction.Search),
+        keyboardActions = KeyboardActions(onSearch = { onSearch() }),
+        modifier = modifier
+            .heightIn(min = 56.dp)
+            .clip(MaterialTheme.shapes.medium),
+        colors = TextFieldDefaults.colors(
+            focusedContainerColor   = Color.White,
+            unfocusedContainerColor = Color.White,
+            disabledContainerColor  = Color.White,
+            focusedIndicatorColor   = Color.Transparent,
+            unfocusedIndicatorColor = Color.Transparent,
+            cursorColor             = Color.Black,
+            focusedTextColor        = Color.Black,
+            unfocusedTextColor      = Color.Black,
+            focusedPlaceholderColor   = Color(0xFF5A5A5A),
+            unfocusedPlaceholderColor = Color(0xFF7C7C7C),
+        )
+    )
+}
+
+@Composable
+private fun TopChip(text: String, onClick: (() -> Unit)? = null) {
+    Surface(
+        color = Color(0x26FFFFFF),
+        contentColor = Color.White,
+        shape = MaterialTheme.shapes.small,
+        modifier = Modifier
+            .height(36.dp)
+            .defaultMinSize(minWidth = 132.dp)
+            .clickable(enabled = onClick != null) { onClick?.invoke() }
+    ) {
+        Box(
+            modifier = Modifier.padding(horizontal = 14.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1
+            )
+        }
+    }
+}
+
+/* ---------- Rail / Lista ---------- */
+
+@Composable
+private fun CategoryRail(
+    categorias: List<String>,
+    produtosPorCategoria: Map<String, List<ProdutoDto>>,
+    selecionada: String,
+    onSeleciona: (String) -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .width(220.dp)
+            .fillMaxHeight()
+            .background(RailBg)
+            .padding(top = 8.dp, bottom = 8.dp)
+    ) {
+        Text(
+            "CATEGORIAS",
+            color = Color.White,
+            fontWeight = FontWeight.Black,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+        )
+        HorizontalDivider(color = DividerClr)
+
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
+        ) {
+            items(categorias) { cat ->
+                val selected = cat == selecionada
+                val produtos = produtosPorCategoria[cat].orEmpty()
+                val thumbProduto = produtos.firstOrNull()
+
+                CategoryTile(
+                    titulo = cat,
+                    produtoThumb = thumbProduto,
+                    selected = selected,
+                    onClick = { onSeleciona(cat) }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun CategoryTile(
+    titulo: String,
+    produtoThumb: ProdutoDto?,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    val bg = if (selected) Orange.copy(alpha = 0.22f) else PanelBg
+    val fg = if (selected) Color.White else Muted
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(60.dp)
+            .clip(MaterialTheme.shapes.medium)
+            .background(bg)
+            .clickable { onClick() }
+            .padding(8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(40.dp)
+                .clip(MaterialTheme.shapes.small)
+                .background(Color(0xFF343A40)),
+            contentAlignment = Alignment.Center
+        ) {
+            var foto by remember(produtoThumb?.codigo) { mutableStateOf<String?>(null) }
+            LaunchedEffect(produtoThumb?.codigo) {
+                foto = produtoThumb?.codigo?.let { codigo ->
+                    try { buscarFotoPrincipal(codigo) } catch (_: Exception) { null }
+                }
+            }
+
+            val fotoOrig = produtoThumb?.foto
+            val isUrlOrig = !fotoOrig.isNullOrBlank() &&
+                    (fotoOrig.startsWith("http", true) || fotoOrig.startsWith("https", true))
+
+            when {
+                !foto.isNullOrBlank() -> AsyncImage(
+                    model = foto, contentDescription = null,
+                    modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop
+                )
+                isUrlOrig -> AsyncImage(
+                    model = fotoOrig, contentDescription = null,
+                    modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop
+                )
+            }
+        }
+
+        Spacer(Modifier.width(10.dp))
+        Text(
+            text = titulo,
+            color = fg,
+            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+@Composable
+private fun SectionedProductList(
+    items: List<SectionItem>,
+    listState: androidx.compose.foundation.lazy.LazyListState,
+    onAdd: (ProdutoDto) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    LazyColumn(
+        state = listState,
+        modifier = modifier
+            .fillMaxHeight()
+            .background(MenuBg)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(10.dp),
+        contentPadding = PaddingValues(bottom = 28.dp)
+    ) {
+        items(items, key = { it.hashCode() }) { item ->
+            when (item) {
+                is SectionItem.Header -> SectionHeader(item.categoria)
+                is SectionItem.Product -> ProductRowCompact(item.produto) { onAdd(item.produto) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SectionHeader(titulo: String) {
+    Surface(
+        color = PanelBg,
+        shape = MaterialTheme.shapes.medium,
+        border = BorderStroke(1.dp, Color(0x22000000)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Text(
+            text = titulo,
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            color = Color.White,
+            fontWeight = FontWeight.Bold
+        )
+    }
+}
+
+@Composable
+private fun ProductRowCompact(
+    produto: ProdutoDto,
+    onAdd: () -> Unit
+) {
+    Surface(color = CardBg, shape = MaterialTheme.shapes.large, tonalElevation = 0.dp) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(140.dp)
+                    .clip(MaterialTheme.shapes.medium)
+                    .background(Color(0xFF343A40)),
+                contentAlignment = Alignment.Center
+            ) {
+                var url by remember(produto.codigo) { mutableStateOf<String?>(null) }
+                LaunchedEffect(produto.codigo) {
+                    url = try { buscarFotoPrincipal(produto.codigo) } catch (_: Exception) { null }
+                }
+                val f = produto.foto
+                val isUrl = !f.isNullOrBlank() && (f.startsWith("http", true) || f.startsWith("https", true))
+
+                when {
+                    !url.isNullOrBlank() -> AsyncImage(
+                        model = url, contentDescription = null,
+                        modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop
+                    )
+                    isUrl -> AsyncImage(
+                        model = f, contentDescription = null,
+                        modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop
+                    )
+                    !f.isNullOrBlank() -> {
+                        val bmp = base64ToImageBitmapOrNull(f)
+                        if (bmp != null) {
+                            Image(
+                                bitmap = bmp, contentDescription = null,
+                                modifier = Modifier.fillMaxSize(),
+                                contentScale = ContentScale.Crop
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(Modifier.width(12.dp))
+
+            Column(Modifier.weight(1f)) {
+                Text(
+                    produto.nome,
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                if (!produto.descricao.isNullOrBlank()) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        produto.descricao!!,
+                        color = Muted,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        fontSize = 12.sp
+                    )
+                }
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    text = formatMoneyUi(produto.valor),
+                    color = Orange, fontWeight = FontWeight.Black, fontSize = 18.sp
+                )
+            }
+
+            Button(
+                onClick = onAdd,
+                colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Color.White),
+                shape = MaterialTheme.shapes.large
+            ) { Text("ADICIONAR AO CARRINHO") }
+        }
+    }
+}
+
+/* ---------- Utils ---------- */
+
+private fun formatMoneyUi(valor: Double?): String {
+    val v = valor ?: 0.0
+    return "R$ " + "%,.2f".format(v).replace(',', 'X').replace('.', ',').replace('X', '.')
+}
+
+@Composable
+private fun base64ToImageBitmapOrNull(base64: String): ImageBitmap? =
+    runCatching { decodeBase64ToImageBitmap(base64) }.getOrNull()
+
+private fun decodeBase64ToImageBitmap(base64: String): ImageBitmap? {
+    val clean = base64.substringAfter(",", base64)
+    val bytes = Base64.decode(clean, Base64.DEFAULT)
+    val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return null
+    return bmp.asImageBitmap()
+}
+
+
+
+
+==== app\src\main\java\com\helptech\abraham\ui\theme\Money.kt ====
+
+package com.helptech.abraham.ui.theme
+
+import java.text.NumberFormat
+import java.util.Locale
+
+// FormataÃ§Ã£o Ãºnica e reutilizÃ¡vel para o app inteiro (pt-BR)
+private val moneyBr: NumberFormat by lazy {
+    NumberFormat.getCurrencyInstance(Locale("pt", "BR")).apply {
+        minimumFractionDigits = 2
+        maximumFractionDigits = 2
+    }
+}
+
+/** Usa em qualquer lugar: ApiPlayground, Menu, etc. */
+fun formatMoney(valor: Double?): String = moneyBr.format(valor ?: 0.0)
+
+
+
+
+==== app\src\main\java\com\helptech\abraham\ui\theme\ProductDetailSheet.kt ====
+
+package com.helptech.abraham.ui.theme
+
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.runtime.snapshots.SnapshotStateList
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import coil.compose.AsyncImage
+import com.helptech.abraham.data.remote.AdicionalItemDto
+import com.helptech.abraham.data.remote.GrupoAdicionalDto
+import com.helptech.abraham.data.remote.OpcaoAdicionalDto
+import com.helptech.abraham.data.remote.ProdutoDto
+import com.helptech.abraham.data.remote.preco
+import com.helptech.abraham.network.buscarFotoPrincipal
+import kotlinx.coroutines.launch
+
+/** Retorno do sheet: quantidade e as opÃ§Ãµes escolhidas por grupo. */
+data class ProdutoEscolhido(
+    val quantidade: Int,
+    val escolhas: Map<String, List<OpcaoAdicionalDto>>
+)
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ProductDetailSheet(
+    produto: ProdutoDto,
+    grupos: List<GrupoAdicionalDto>,
+    onDismiss: () -> Unit,
+    onConfirm: (ProdutoEscolhido) -> Unit
+) {
+    val scope = rememberCoroutineScope()
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    LaunchedEffect(Unit) { scope.launch { sheetState.expand() } }
+
+    var quantidade by remember { mutableStateOf(1) }
+
+    fun keyOf(g: GrupoAdicionalDto, idx: Int): String =
+        g.nome.takeIf { it.isNotBlank() } ?: "Adicionais #$idx"
+
+    // Guardamos seleÃ§Ãµes por grupo (AdicionalItemDto); no confirmar mapeamos pra OpcaoAdicionalDto
+    val escolhas: MutableMap<String, SnapshotStateList<AdicionalItemDto>> =
+        remember(grupos) {
+            mutableStateMapOf<String, SnapshotStateList<AdicionalItemDto>>().apply {
+                grupos.forEachIndexed { i, g -> put(keyOf(g, i), mutableStateListOf()) }
+            }
+        }
+
+    var fotoUrl by remember(produto.codigo) { mutableStateOf<String?>(null) }
+    LaunchedEffect(produto.codigo) {
+        fotoUrl = try { buscarFotoPrincipal(produto.codigo) } catch (_: Exception) { null }
+    }
+
+    // soma dos adicionais selecionados (usando extension preco do AdicionalItemDto)
+    val adicionalUnit by remember(grupos, escolhas) {
+        derivedStateOf { escolhas.values.flatten().sumOf { it.preco } }
+    }
+    val precoUnit = (produto.valor ?: 0.0) + adicionalUnit
+    val total = precoUnit * quantidade
+
+    val podeConfirmar by remember(grupos, escolhas) {
+        derivedStateOf {
+            grupos.withIndex().all { (idx, g) ->
+                val min = g.adicional_qtde_min ?: 0
+                if (min > 0) escolhas[keyOf(g, idx)].orEmpty().size >= min else true
+            }
+        }
+    }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        dragHandle = { BottomSheetDefaults.DragHandle() },
+        containerColor = Color.White,
+        contentColor = Color(0xFF111111),
+        scrimColor = Color(0x99000000)
+    ) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .imePadding()
+                .padding(horizontal = 16.dp, vertical = 12.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                AsyncImage(
+                    model = fotoUrl ?: produto.foto,
+                    contentDescription = null,
+                    modifier = Modifier.size(96.dp)
+                )
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        text = produto.nome,
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                        color = Color(0xFF111111)
+                    )
+                    if (!produto.descricao.isNullOrBlank()) {
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            text = produto.descricao!!,
+                            color = Color(0xFF5F6368)
+                        )
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        text = formatMoneyUi(precoUnit),
+                        color = MaterialTheme.colorScheme.primary,
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Black)
+                    )
+                }
+                QuantityStepper(
+                    valor = quantidade,
+                    onMinus = { if (quantidade > 1) quantidade-- },
+                    onPlus = { quantidade++ }
+                )
+            }
+
+            Spacer(Modifier.height(12.dp))
+            Divider()
+            Spacer(Modifier.height(8.dp))
+
+            if (grupos.isNotEmpty()) {
+                LazyColumn(
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 520.dp)
+                ) {
+                    items(grupos, key = { (it.nome.ifBlank { "Adicionais" }) + "|" + it.hashCode() }) { g ->
+                        val idx = grupos.indexOf(g)
+                        val gKey = keyOf(g, idx)
+
+                        GrupoAdicionalCard(
+                            grupo = g,
+                            selecionadas = escolhas[gKey].orEmpty(),
+                            onSelect = { opc ->
+                                val max = g.adicional_qtde_max ?: 0
+                                val lista = escolhas.getOrPut(gKey) { mutableStateListOf() }
+                                if (max <= 1) {
+                                    lista.clear(); lista.add(opc)
+                                } else {
+                                    val exists = lista.any { it.codigo == opc.codigo }
+                                    if (exists) {
+                                        lista.removeAll { it.codigo == opc.codigo }
+                                    } else if (max == 0 || lista.size < max) {
+                                        lista.add(opc)
+                                    }
+                                }
+                            }
+                        )
+                    }
+                    item { Spacer(Modifier.height(4.dp)) }
+                }
+            } else {
+                Text("Sem adicionais para este produto.", color = Color(0xFF5F6368))
+                Spacer(Modifier.height(8.dp))
+            }
+
+            Spacer(Modifier.height(8.dp))
+            Button(
+                onClick = {
+                    // Converte selecionados (AdicionalItemDto) -> OpcaoAdicionalDto pro carrinho
+                    val escolhasMap: Map<String, List<OpcaoAdicionalDto>> =
+                        escolhas.mapValues { (_, lista) ->
+                            lista.map { it.asOpcao() }
+                        }
+
+                    onConfirm(
+                        ProdutoEscolhido(
+                            quantidade = quantidade,
+                            escolhas = escolhasMap
+                        )
+                    )
+                },
+                enabled = podeConfirmar,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp),
+                shape = MaterialTheme.shapes.large
+            ) {
+                Text("Adicionar ao carrinho â€” ${formatMoneyUi(total)}")
+            }
+        }
+    }
+}
+
+@Composable
+private fun GrupoAdicionalCard(
+    grupo: GrupoAdicionalDto,
+    selecionadas: List<AdicionalItemDto>,
+    onSelect: (AdicionalItemDto) -> Unit
+) {
+    val opcoes: List<AdicionalItemDto> = grupo.adicionais
+    if (opcoes.isEmpty()) return
+
+    val tituloGrupo = grupo.nome.ifBlank { "Adicionais" }
+    val obrigatorio = (grupo.adicional_qtde_min ?: 0) > 0
+    val max = grupo.adicional_qtde_max ?: 0
+
+    Surface(
+        color = Color(0xFFF5F6F8),
+        contentColor = Color(0xFF111111),
+        shape = MaterialTheme.shapes.medium,
+        border = BorderStroke(1.dp, Color(0x22000000)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(12.dp)) {
+            val sub = buildString {
+                if (obrigatorio) append("ObrigatÃ³rio")
+                if (max > 0) { if (isNotEmpty()) append(" â€¢ "); append("AtÃ© $max") }
+            }
+            Text(
+                text = tituloGrupo,
+                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
+            )
+            if (sub.isNotEmpty()) {
+                Text(text = sub, color = Color(0xFF5F6368), style = MaterialTheme.typography.bodySmall)
+            }
+            Spacer(Modifier.height(8.dp))
+
+            opcoes.forEach { op ->
+                val checked = selecionadas.any { it.codigo == op.codigo }
+                val nomeOpc = op.nome.ifBlank { "OpÃ§Ã£o" }
+
+                val precoOpc = op.preco
+                val titulo = if (precoOpc > 0.0) {
+                    "$nomeOpc  (+ ${formatMoneyUi(precoOpc)})"
+                } else nomeOpc
+
+                if (max <= 1) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(
+                            selected = checked,
+                            onClick = { onSelect(op) },
+                            colors = RadioButtonDefaults.colors(selectedColor = MaterialTheme.colorScheme.primary)
+                        )
+                        Text(text = titulo, modifier = Modifier.padding(start = 8.dp))
+                    }
+                } else {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(
+                            checked = checked,
+                            onCheckedChange = { onSelect(op) },
+                            colors = CheckboxDefaults.colors(checkedColor = MaterialTheme.colorScheme.primary)
+                        )
+                        Text(text = titulo, modifier = Modifier.padding(start = 8.dp))
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun QuantityStepper(
+    valor: Int,
+    onMinus: () -> Unit,
+    onPlus: () -> Unit
+) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        IconButton(onClick = onMinus) { Icon(Icons.Filled.Remove, contentDescription = null, tint = Color(0xFF111111)) }
+        Text("$valor", modifier = Modifier.widthIn(min = 24.dp), color = Color(0xFF111111))
+        IconButton(onClick = onPlus) { Icon(Icons.Filled.Add, contentDescription = null, tint = Color(0xFF111111)) }
+    }
+}
+
+private fun formatMoneyUi(v: Double?): String {
+    val x = v ?: 0.0
+    return "R$ " + "%,.2f".format(x).replace(',', 'X').replace('.', ',').replace('X', '.')
+}
+
+/** Criei aqui pra resolver o erro de referÃªncia ausente. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ProductDetailLoading(onDismiss: () -> Unit) {
+    val state = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = state,
+        dragHandle = { BottomSheetDefaults.DragHandle() },
+        containerColor = Color.White,
+        contentColor = Color(0xFF111111),
+        scrimColor = Color(0x99000000)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .padding(vertical = 32.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            CircularProgressIndicator()
+            Spacer(Modifier.height(12.dp))
+            Text("Carregando adicionaisâ€¦")
+        }
+    }
+}
+
+/* ------------------------- Mapeamento para carrinho ------------------------- */
+
+private fun AdicionalItemDto.asOpcao(): OpcaoAdicionalDto =
+    OpcaoAdicionalDto(
+        codigo = this.codigo,
+        categoria_codigo = this.categoria_codigo,
+        tipo = this.tipo,
+        nome = this.nome,
+        descricao = this.descricao,
+        sub_nome = null,
+        cor_sub_nome = null,
+        valor = this.valor,
+        valorAd = this.valorAd,
+        estoque = null,
+        limitar_estoque = null,
+        fracao = null,
+        item_adicional_obrigar = null,
+        adicional_juncao = null,
+        item_adicional_multi = null,
+        adicional_qtde_min = null,
+        adicional_qtde_max = null,
+        codigo_empresa = null,
+        codigo_barras = null,
+        codigo_barras_padrao = null,
+        usu_alt = null,
+        dta_alteracao = null,
+        ativo = null,
+        qtde_min_pedido = null,
+        incremento_qtde = null,
+        ordem = null,
+        limite_adicao = null,
+        pizza_qtde_sabor = null,
+        editavel = null,
+        vis_online = null,
+        pdv_obs = null,
+        valor_custo = null,
+        categoria_nome = null
+    )
+
+
+
+
+==== app\src\main\java\com\helptech\abraham\ui\theme\Theme.kt ====
+
+package com.helptech.abraham.ui.theme
+
+import android.app.Activity
+import android.os.Build
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.dynamicDarkColorScheme
+import androidx.compose.material3.dynamicLightColorScheme
+import androidx.compose.material3.lightColorScheme
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.platform.LocalContext
+
+private val DarkColorScheme = darkColorScheme(
+    primary = Purple80,
+    secondary = PurpleGrey80,
+    tertiary = Pink80
+)
+
+private val LightColorScheme = lightColorScheme(
+    primary = Purple40,
+    secondary = PurpleGrey40,
+    tertiary = Pink40
+
+    /* Other default colors to override
+    background = Color(0xFFFFFBFE),
+    surface = Color(0xFFFFFBFE),
+    onPrimary = Color.White,
+    onSecondary = Color.White,
+    onTertiary = Color.White,
+    onBackground = Color(0xFF1C1B1F),
+    onSurface = Color(0xFF1C1B1F),
+    */
+)
+
+@Composable
+fun AbrahamPedidosTheme(
+    darkTheme: Boolean = isSystemInDarkTheme(),
+    // Dynamic color is available on Android 12+
+    dynamicColor: Boolean = true,
+    content: @Composable () -> Unit
+) {
+    val colorScheme = when {
+        dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
+            val context = LocalContext.current
+            if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+        }
+
+        darkTheme -> DarkColorScheme
+        else -> LightColorScheme
+    }
+
+    MaterialTheme(
+        colorScheme = colorScheme,
+        typography = Typography,
+        content = content
+    )
+}
+
+
+
+==== app\src\main\java\com\helptech\abraham\ui\theme\Type.kt ====
+
+package com.helptech.abraham.ui.theme
+
+import androidx.compose.material3.Typography
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.sp
+
+// Set of Material typography styles to start with
+val Typography = Typography(
+    bodyLarge = TextStyle(
+        fontFamily = FontFamily.Default,
+        fontWeight = FontWeight.Normal,
+        fontSize = 16.sp,
+        lineHeight = 24.sp,
+        letterSpacing = 0.5.sp
+    )
+    /* Other default text styles to override
+    titleLarge = TextStyle(
+        fontFamily = FontFamily.Default,
+        fontWeight = FontWeight.Normal,
+        fontSize = 22.sp,
+        lineHeight = 28.sp,
+        letterSpacing = 0.sp
+    ),
+    labelSmall = TextStyle(
+        fontFamily = FontFamily.Default,
+        fontWeight = FontWeight.Medium,
+        fontSize = 11.sp,
+        lineHeight = 16.sp,
+        letterSpacing = 0.5.sp
+    )
+    */
+)
+
+
+
+==== app\src\main\res\drawable\ic_launcher_background.xml ====
+
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#3DDC84"
+        android:pathData="M0,0h108v108h-108z" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M9,0L9,108"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M19,0L19,108"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M29,0L29,108"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M39,0L39,108"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M49,0L49,108"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M59,0L59,108"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M69,0L69,108"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M79,0L79,108"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M89,0L89,108"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M99,0L99,108"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M0,9L108,9"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M0,19L108,19"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M0,29L108,29"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M0,39L108,39"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M0,49L108,49"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M0,59L108,59"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M0,69L108,69"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M0,79L108,79"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M0,89L108,89"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M0,99L108,99"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M19,29L89,29"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M19,39L89,39"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M19,49L89,49"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M19,59L89,59"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M19,69L89,69"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M19,79L89,79"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M29,19L29,89"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M39,19L39,89"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M49,19L49,89"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M59,19L59,89"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M69,19L69,89"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M79,19L79,89"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+</vector>
+
+
+
+
+==== app\src\main\res\drawable\ic_launcher_foreground.xml ====
+
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path android:pathData="M31,63.928c0,0 6.4,-11 12.1,-13.1c7.2,-2.6 26,-1.4 26,-1.4l38.1,38.1L107,108.928l-32,-1L31,63.928z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:endX="85.84757"
+                android:endY="92.4963"
+                android:startX="42.9492"
+                android:startY="49.59793"
+                android:type="linear">
+                <item
+                    android:color="#44000000"
+                    android:offset="0.0" />
+                <item
+                    android:color="#00000000"
+                    android:offset="1.0" />
+            </gradient>
+        </aapt:attr>
+    </path>
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillType="nonZero"
+        android:pathData="M65.3,45.828l3.8,-6.6c0.2,-0.4 0.1,-0.9 -0.3,-1.1c-0.4,-0.2 -0.9,-0.1 -1.1,0.3l-3.9,6.7c-6.3,-2.8 -13.4,-2.8 -19.7,0l-3.9,-6.7c-0.2,-0.4 -0.7,-0.5 -1.1,-0.3C38.8,38.328 38.7,38.828 38.9,39.228l3.8,6.6C36.2,49.428 31.7,56.028 31,63.928h46C76.3,56.028 71.8,49.428 65.3,45.828zM43.4,57.328c-0.8,0 -1.5,-0.5 -1.8,-1.2c-0.3,-0.7 -0.1,-1.5 0.4,-2.1c0.5,-0.5 1.4,-0.7 2.1,-0.4c0.7,0.3 1.2,1 1.2,1.8C45.3,56.528 44.5,57.328 43.4,57.328L43.4,57.328zM64.6,57.328c-0.8,0 -1.5,-0.5 -1.8,-1.2s-0.1,-1.5 0.4,-2.1c0.5,-0.5 1.4,-0.7 2.1,-0.4c0.7,0.3 1.2,1 1.2,1.8C66.5,56.528 65.6,57.328 64.6,57.328L64.6,57.328z"
+        android:strokeWidth="1"
+        android:strokeColor="#00000000" />
+</vector>
+
+
+
+==== app\src\main\res\mipmap-anydpi-v26\ic_launcher.xml ====
+
+<?xml version="1.0" encoding="utf-8"?>
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@drawable/ic_launcher_background" />
+    <foreground android:drawable="@drawable/ic_launcher_foreground" />
+    <monochrome android:drawable="@drawable/ic_launcher_foreground" />
+</adaptive-icon>
+
+
+
+==== app\src\main\res\mipmap-anydpi-v26\ic_launcher_round.xml ====
+
+<?xml version="1.0" encoding="utf-8"?>
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@drawable/ic_launcher_background" />
+    <foreground android:drawable="@drawable/ic_launcher_foreground" />
+    <monochrome android:drawable="@drawable/ic_launcher_foreground" />
+</adaptive-icon>
+
+
+
+==== app\src\main\res\values\colors.xml ====
+
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="purple_200">#FFBB86FC</color>
+    <color name="purple_500">#FF6200EE</color>
+    <color name="purple_700">#FF3700B3</color>
+    <color name="teal_200">#FF03DAC5</color>
+    <color name="teal_700">#FF018786</color>
+    <color name="black">#FF000000</color>
+    <color name="white">#FFFFFFFF</color>
+</resources>
+
+
+
+==== app\src\main\res\values\strings.xml ====
+
+<resources>
+    <string name="app_name">AbrahamPedidos</string>
+</resources>
+
+
+
+==== app\src\main\res\values\themes.xml ====
+
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <style name="Theme.AbrahamPedidos" parent="android:Theme.Material.Light.NoActionBar" />
+</resources>
+
+
+
+==== app\src\main\res\xml\backup_rules.xml ====
+
+<?xml version="1.0" encoding="utf-8"?><!--
+   Sample backup rules file; uncomment and customize as necessary.
+   See https://developer.android.com/guide/topics/data/autobackup
+   for details.
+   Note: This file is ignored for devices older than API 31
+   See https://developer.android.com/about/versions/12/backup-restore
+-->
+<full-backup-content>
+    <!--
+   <include domain="sharedpref" path="."/>
+   <exclude domain="sharedpref" path="device.xml"/>
+-->
+</full-backup-content>
+
+
+
+==== app\src\main\res\xml\data_extraction_rules.xml ====
+
+<?xml version="1.0" encoding="utf-8"?><!--
+   Sample data extraction rules file; uncomment and customize as necessary.
+   See https://developer.android.com/about/versions/12/backup-restore#xml-changes
+   for details.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <!-- TODO: Use <include> and <exclude> to control what is backed up.
+        <include .../>
+        <exclude .../>
+        -->
+    </cloud-backup>
+    <!--
+    <device-transfer>
+        <include .../>
+        <exclude .../>
+    </device-transfer>
+    -->
+</data-extraction-rules>
+
+
+
+==== build.gradle.kts ====
+
+// Top-level build file
+plugins {
+    alias(libs.plugins.android.application) apply false
+    alias(libs.plugins.kotlin.android) apply false
+    // (se tiver esta linha no seu catÃ¡logo, pode manter)
+    // alias(libs.plugins.kotlin.compose) apply false
+}
+
+
+
+
+==== settings.gradle.kts ====
+
+pluginManagement {
+    repositories {
+        // RepositÃ³rios para resolver *plugins* (AGP, Kotlin, Compose, etc.)
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+
+plugins {
+    // MantÃ©m a resoluÃ§Ã£o automÃ¡tica de toolchains (Java 17)
+    id("org.gradle.toolchains.foojay-resolver-convention") version "0.5.0"
+}
+
+dependencyResolutionManagement {
+    // Usa apenas os repositÃ³rios definidos acima (evita repositÃ³rios por mÃ³dulo)
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories {
+        // RepositÃ³rios para as dependÃªncias normais do app
+        google()
+        mavenCentral()
+    }
+}
+
+rootProject.name = "AbrahamPedidos"
+include(":app")
+
+
+

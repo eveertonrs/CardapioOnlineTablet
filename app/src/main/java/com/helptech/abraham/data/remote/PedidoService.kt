@@ -1,7 +1,6 @@
 package com.helptech.abraham.data.remote
 
 import com.google.gson.JsonElement
-import com.helptech.abraham.BuildConfig
 import java.math.BigDecimal
 import java.math.RoundingMode
 
@@ -111,7 +110,7 @@ suspend fun enviarPedido(
     )
 
     val env = AkitemClient.api.call(
-        empresa = BuildConfig.API_EMPRESA,
+        empresa = null,   // runtime via interceptor
         modulo  = "pedido",
         funcao  = "gravarPedido",
         body    = body

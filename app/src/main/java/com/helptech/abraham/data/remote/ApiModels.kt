@@ -65,7 +65,7 @@ data class ProdutoDto(
     val categoria_nome: String?,
     val foto: String? = null,
 
-    // a API pode devolver um bloco "adicionais" junto do produto
+    // a API pode devolver um bloco "adicionais" junto do produto (formatos variados)
     val adicionais: Any? = null
 )
 
@@ -91,28 +91,6 @@ data class AdicionalItemDto(
 
     val ativo: String?,
     val categoria_nome: String? = null
-)
-
-/** Grupo de adicionais de um produto. */
-data class AdicionalGrupoDto(
-    val codigo: Int,
-    val produtos_codigo: Int?,
-    val nome: String,
-
-    // Regras:
-    val adicional_qtde_min: Int? = null,
-    val adicional_qtde_max: Int? = null,
-    val adicional_juncao: String? = null,      // "SOMA", "MEDIA", ...
-
-    // Pizzas:
-    val sabor_pizza: String? = null,           // "S" | "N"
-
-    // Extras/ordenação:
-    val ordem: Int? = null,
-    val descricao: String? = null,
-
-    // Lista de opções:
-    val adicionais: List<AdicionalItemDto> = emptyList()
 )
 
 /* -------------------------------------------------------------------------- */

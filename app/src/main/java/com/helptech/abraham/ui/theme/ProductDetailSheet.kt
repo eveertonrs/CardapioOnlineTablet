@@ -1,7 +1,6 @@
 package com.helptech.abraham.ui.theme
 
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -17,14 +16,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
+import com.helptech.abraham.data.remote.AdicionalItemDto
 import com.helptech.abraham.data.remote.GrupoAdicionalDto
 import com.helptech.abraham.data.remote.OpcaoAdicionalDto
 import com.helptech.abraham.data.remote.ProdutoDto
+import com.helptech.abraham.data.remote.preco
 import com.helptech.abraham.network.buscarFotoPrincipal
 import kotlinx.coroutines.launch
-
-// >>> IMPORTA O EXTENSION 'preco' (fallback valor/valor_ad)
-import com.helptech.abraham.data.remote.preco
 
 /** Retorno do sheet: quantidade e as opções escolhidas por grupo. */
 data class ProdutoEscolhido(
@@ -43,18 +41,17 @@ fun ProductDetailSheet(
     val scope = rememberCoroutineScope()
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
-    // abre já expandido pra não cortar conteúdo
     LaunchedEffect(Unit) { scope.launch { sheetState.expand() } }
 
     var quantidade by remember { mutableStateOf(1) }
 
     fun keyOf(g: GrupoAdicionalDto, idx: Int): String =
-        g.grupo?.takeIf { it.isNotBlank() } ?: "Adicionais #$idx"
+        g.nome.takeIf { it.isNotBlank() } ?: "Adicionais #$idx"
 
-    // Seleções por grupo
-    val escolhas: MutableMap<String, SnapshotStateList<OpcaoAdicionalDto>> =
+    // Guardamos seleções por grupo (AdicionalItemDto); no confirmar mapeamos pra OpcaoAdicionalDto
+    val escolhas: MutableMap<String, SnapshotStateList<AdicionalItemDto>> =
         remember(grupos) {
-            mutableStateMapOf<String, SnapshotStateList<OpcaoAdicionalDto>>().apply {
+            mutableStateMapOf<String, SnapshotStateList<AdicionalItemDto>>().apply {
                 grupos.forEachIndexed { i, g -> put(keyOf(g, i), mutableStateListOf()) }
             }
         }
@@ -64,7 +61,7 @@ fun ProductDetailSheet(
         fotoUrl = try { buscarFotoPrincipal(produto.codigo) } catch (_: Exception) { null }
     }
 
-    // >>> usa 'preco' para somar corretamente (valor != 0 senão valor_ad)
+    // soma dos adicionais selecionados (usando extension preco do AdicionalItemDto)
     val adicionalUnit by remember(grupos, escolhas) {
         derivedStateOf { escolhas.values.flatten().sumOf { it.preco } }
     }
@@ -74,9 +71,8 @@ fun ProductDetailSheet(
     val podeConfirmar by remember(grupos, escolhas) {
         derivedStateOf {
             grupos.withIndex().all { (idx, g) ->
-                if (g.obrigatorio.equals("S", true))
-                    escolhas[keyOf(g, idx)].orEmpty().isNotEmpty()
-                else true
+                val min = g.adicional_qtde_min ?: 0
+                if (min > 0) escolhas[keyOf(g, idx)].orEmpty().size >= min else true
             }
         }
     }
@@ -105,7 +101,7 @@ fun ProductDetailSheet(
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
                     Text(
-                        text = produto.nome ?: "",
+                        text = produto.nome,
                         style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                         color = Color(0xFF111111)
                     )
@@ -141,7 +137,7 @@ fun ProductDetailSheet(
                         .fillMaxWidth()
                         .heightIn(max = 520.dp)
                 ) {
-                    items(grupos, key = { (it.grupo ?: "Adicionais") + "|" + it.hashCode() }) { g ->
+                    items(grupos, key = { (it.nome.ifBlank { "Adicionais" }) + "|" + it.hashCode() }) { g ->
                         val idx = grupos.indexOf(g)
                         val gKey = keyOf(g, idx)
 
@@ -149,7 +145,7 @@ fun ProductDetailSheet(
                             grupo = g,
                             selecionadas = escolhas[gKey].orEmpty(),
                             onSelect = { opc ->
-                                val max = g.max ?: 0
+                                val max = g.adicional_qtde_max ?: 0
                                 val lista = escolhas.getOrPut(gKey) { mutableStateListOf() }
                                 if (max <= 1) {
                                     lista.clear(); lista.add(opc)
@@ -161,9 +157,7 @@ fun ProductDetailSheet(
                                         lista.add(opc)
                                     }
                                 }
-                            },
-                            obrigatorio = g.obrigatorio.equals("S", true),
-                            max = g.max ?: 0
+                            }
                         )
                     }
                     item { Spacer(Modifier.height(4.dp)) }
@@ -176,10 +170,16 @@ fun ProductDetailSheet(
             Spacer(Modifier.height(8.dp))
             Button(
                 onClick = {
+                    // Converte selecionados (AdicionalItemDto) -> OpcaoAdicionalDto pro carrinho
+                    val escolhasMap: Map<String, List<OpcaoAdicionalDto>> =
+                        escolhas.mapValues { (_, lista) ->
+                            lista.map { it.asOpcao() }
+                        }
+
                     onConfirm(
                         ProdutoEscolhido(
                             quantidade = quantidade,
-                            escolhas = escolhas.mapValues { it.value.toList() }
+                            escolhas = escolhasMap
                         )
                     )
                 },
@@ -198,15 +198,15 @@ fun ProductDetailSheet(
 @Composable
 private fun GrupoAdicionalCard(
     grupo: GrupoAdicionalDto,
-    selecionadas: List<OpcaoAdicionalDto>,
-    onSelect: (OpcaoAdicionalDto) -> Unit,
-    obrigatorio: Boolean,
-    max: Int
+    selecionadas: List<AdicionalItemDto>,
+    onSelect: (AdicionalItemDto) -> Unit
 ) {
-    val opcoes = grupo.opcoes ?: emptyList()
+    val opcoes: List<AdicionalItemDto> = grupo.adicionais
     if (opcoes.isEmpty()) return
 
-    val tituloGrupo = grupo.grupo?.takeIf { it.isNotBlank() } ?: "Adicionais"
+    val tituloGrupo = grupo.nome.ifBlank { "Adicionais" }
+    val obrigatorio = (grupo.adicional_qtde_min ?: 0) > 0
+    val max = grupo.adicional_qtde_max ?: 0
 
     Surface(
         color = Color(0xFFF5F6F8),
@@ -231,9 +231,8 @@ private fun GrupoAdicionalCard(
 
             opcoes.forEach { op ->
                 val checked = selecionadas.any { it.codigo == op.codigo }
-                val nomeOpc = op.nome?.ifBlank { "Opção" } ?: "Opção"
+                val nomeOpc = op.nome.ifBlank { "Opção" }
 
-                // >>> usa 'preco' para decidir exibição do (+ R$)
                 val precoOpc = op.preco
                 val titulo = if (precoOpc > 0.0) {
                     "$nomeOpc  (+ ${formatMoneyUi(precoOpc)})"
@@ -281,6 +280,7 @@ private fun formatMoneyUi(v: Double?): String {
     return "R$ " + "%,.2f".format(x).replace(',', 'X').replace('.', ',').replace('X', '.')
 }
 
+/** Criei aqui pra resolver o erro de referência ausente. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ProductDetailLoading(onDismiss: () -> Unit) {
@@ -306,3 +306,42 @@ fun ProductDetailLoading(onDismiss: () -> Unit) {
         }
     }
 }
+
+/* ------------------------- Mapeamento para carrinho ------------------------- */
+
+private fun AdicionalItemDto.asOpcao(): OpcaoAdicionalDto =
+    OpcaoAdicionalDto(
+        codigo = this.codigo,
+        categoria_codigo = this.categoria_codigo,
+        tipo = this.tipo,
+        nome = this.nome,
+        descricao = this.descricao,
+        sub_nome = null,
+        cor_sub_nome = null,
+        valor = this.valor,
+        valorAd = this.valorAd,
+        estoque = null,
+        limitar_estoque = null,
+        fracao = null,
+        item_adicional_obrigar = null,
+        adicional_juncao = null,
+        item_adicional_multi = null,
+        adicional_qtde_min = null,
+        adicional_qtde_max = null,
+        codigo_empresa = null,
+        codigo_barras = null,
+        codigo_barras_padrao = null,
+        usu_alt = null,
+        dta_alteracao = null,
+        ativo = null,
+        qtde_min_pedido = null,
+        incremento_qtde = null,
+        ordem = null,
+        limite_adicao = null,
+        pizza_qtde_sabor = null,
+        editavel = null,
+        vis_online = null,
+        pdv_obs = null,
+        valor_custo = null,
+        categoria_nome = null
+    )

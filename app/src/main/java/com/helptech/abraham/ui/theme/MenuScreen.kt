@@ -1,5 +1,8 @@
 package com.helptech.abraham.ui.theme
 
+import android.graphics.BitmapFactory
+import android.util.Base64
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -8,15 +11,20 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalFocusManager
@@ -37,9 +45,6 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 
 /* ===== Paleta ===== */
 private val Orange     = Color(0xFFF57C00)
@@ -57,7 +62,7 @@ private sealed interface SectionItem {
 }
 
 /* ============================================================
- * Host (opcional)
+ * Host (abre sheet, carrega adicionais e confirma seleção)
  * ============================================================ */
 @Composable
 fun MenuScreenHost(
@@ -87,9 +92,9 @@ fun MenuScreenHost(
 
     produtoSel?.let { p ->
         LaunchedEffect(p.codigo) {
-            val locais = AdicionaisRepo.fromProduto(p)
+            val locais: List<GrupoAdicionalDto> = AdicionaisRepo.fromProduto(produto = p)
             gruposSel = if (locais.isNotEmpty()) locais
-            else AdicionaisService.consultarAdicionais(p.codigo)
+            else AdicionaisService.consultarAdicionais(produtoCodigo = p.codigo)
         }
 
         val fechar = {
@@ -112,7 +117,7 @@ fun MenuScreenHost(
     }
 }
 
-/** Tela principal */
+/** Tela principal (barra + rail + lista) */
 @Composable
 fun RestaurantMenuColumnsScreen(
     produtos: List<ProdutoDto>,
@@ -180,8 +185,9 @@ fun RestaurantMenuColumnsScreen(
     LaunchedEffect(Unit) {
         snapshotFlow { listState.firstVisibleItemIndex }
             .map { firstIdx ->
-                var idx = firstIdx.coerceIn(0, flatList.lastIndex.coerceAtLeast(0))
-                while (idx >= 0 && flatList[idx] !is SectionItem.Header) idx--
+                val maxIndex = if (flatList.isNotEmpty()) flatList.lastIndex else 0
+                var idx = firstIdx.coerceIn(0, maxIndex).coerceAtLeastZero()
+                while (idx >= 0 && flatList.getOrNull(idx) !is SectionItem.Header) idx--
                 (flatList.getOrNull(idx) as? SectionItem.Header)?.categoria
             }
             .filter { it != null }
@@ -232,7 +238,9 @@ fun RestaurantMenuColumnsScreen(
     }
 }
 
-/* ---------- Top bar (mais alta) ---------- */
+private fun Int.coerceAtLeastZero() = if (this < 0) 0 else this
+
+/* ---------- Top bar ---------- */
 
 @Composable
 private fun TopBarOrange(
@@ -251,7 +259,7 @@ private fun TopBarOrange(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(64.dp)              // topo mais alto
+                .height(64.dp)
                 .padding(horizontal = 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -310,14 +318,11 @@ private fun SearchField(
         },
         singleLine = true,
         leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null, tint = Color(0xFF5A5A5A)) },
-        textStyle = TextStyle(
-            fontSize = 18.sp,         // maior e sem cortar caudas
-            lineHeight = 24.sp
-        ),
+        textStyle = TextStyle(fontSize = 18.sp, lineHeight = 24.sp),
         keyboardOptions = KeyboardOptions.Default.copy(imeAction = ImeAction.Search),
         keyboardActions = KeyboardActions(onSearch = { onSearch() }),
         modifier = modifier
-            .heightIn(min = 56.dp)    // altura padrão confortável
+            .heightIn(min = 56.dp)
             .clip(MaterialTheme.shapes.medium),
         colors = TextFieldDefaults.colors(
             focusedContainerColor   = Color.White,
@@ -334,7 +339,6 @@ private fun SearchField(
     )
 }
 
-/* Chips do topo maiores (inclui CARRINHO) */
 @Composable
 private fun TopChip(text: String, onClick: (() -> Unit)? = null) {
     Surface(
@@ -342,17 +346,17 @@ private fun TopChip(text: String, onClick: (() -> Unit)? = null) {
         contentColor = Color.White,
         shape = MaterialTheme.shapes.small,
         modifier = Modifier
-            .height(36.dp)                // ↑ altura do chip
-            .defaultMinSize(minWidth = 132.dp) // ↑ mais “corpo”, o de Carrinho fica maior
+            .height(36.dp)
+            .defaultMinSize(minWidth = 132.dp)
             .clickable(enabled = onClick != null) { onClick?.invoke() }
     ) {
         Box(
-            modifier = Modifier.padding(horizontal = 14.dp), // ↑ padding
+            modifier = Modifier.padding(horizontal = 14.dp),
             contentAlignment = Alignment.Center
         ) {
             Text(
                 text,
-                fontSize = 14.sp,          // ↑ fonte
+                fontSize = 14.sp,
                 fontWeight = FontWeight.SemiBold,
                 maxLines = 1
             )
@@ -479,7 +483,7 @@ private fun SectionedProductList(
             .fillMaxHeight()
             .background(MenuBg)
             .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+        verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(10.dp),
         contentPadding = PaddingValues(bottom = 28.dp)
     ) {
         items(items, key = { it.hashCode() }) { item ->
@@ -600,8 +604,12 @@ private fun formatMoneyUi(valor: Double?): String {
 }
 
 @Composable
-private fun base64ToImageBitmapOrNull(base64: String) =
+private fun base64ToImageBitmapOrNull(base64: String): ImageBitmap? =
     runCatching { decodeBase64ToImageBitmap(base64) }.getOrNull()
 
-private fun decodeBase64ToImageBitmap(@Suppress("UNUSED_PARAMETER") base64: String)
-        : androidx.compose.ui.graphics.ImageBitmap? = null
+private fun decodeBase64ToImageBitmap(base64: String): ImageBitmap? {
+    val clean = base64.substringAfter(",", base64)
+    val bytes = Base64.decode(clean, Base64.DEFAULT)
+    val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return null
+    return bmp.asImageBitmap()
+}

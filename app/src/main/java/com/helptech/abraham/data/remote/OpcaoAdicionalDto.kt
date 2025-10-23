@@ -1,5 +1,6 @@
 package com.helptech.abraham.data.remote
 
+import com.google.gson.annotations.JsonAdapter
 import com.google.gson.annotations.SerializedName
 
 /**
@@ -17,10 +18,12 @@ data class OpcaoAdicionalDto(
 
     // preço exibido “valor” (normalmente 0 para adicionais)
     @SerializedName("valor")
+    @JsonAdapter(DoubleOrNullAdapter::class)
     val valor: Double? = null,
 
     // preço do adicional vindo do JSON
     @SerializedName("valor_ad")
+    @JsonAdapter(DoubleOrNullAdapter::class)
     val valorAd: Double? = null,
 
     val estoque: Int? = null,

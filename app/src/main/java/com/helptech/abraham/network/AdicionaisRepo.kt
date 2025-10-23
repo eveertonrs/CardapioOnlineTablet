@@ -1,103 +1,245 @@
 package com.helptech.abraham.network
 
+import android.util.Log
 import com.google.gson.Gson
+import com.google.gson.JsonElement
+import com.google.gson.JsonObject
+import com.google.gson.JsonParser
+import com.google.gson.reflect.TypeToken
+import com.helptech.abraham.data.remote.AdicionalItemDto
 import com.helptech.abraham.data.remote.GrupoAdicionalDto
-import com.helptech.abraham.data.remote.OpcaoAdicionalDto
 import com.helptech.abraham.data.remote.ProdutoDto
 
 /**
- * Converte o campo dinâmico `produto.adicionais` (que pode vir em vários formatos)
- * para uma lista estável de [GrupoAdicionalDto] usada pela UI.
+ * Lê os "adicionais" que já podem vir junto do Produto (em vários formatos)
+ * e normaliza para List<GrupoAdicionalDto>.
  *
- * Formatos suportados:
- *  1) Map { "sucesso": [ { grupo... , "adicionais": [ ... ] } ] }
- *  2) List<GrupoAdicionalDto> já mapeada
- *  3) List<Map<*, *>> bruta (cada item é um grupo)
+ * Formatos aceitos (vistos em ambientes diferentes):
+ *  - produto.adicionais é List<GrupoAdicionalDto>
+ *  - produto.adicionais é List<Map<String, *>> com chaves legadas: "grupo", "obrigatorio", "max", "opcoes"
+ *  - produto.adicionais é Map com "grupos" ou "adicionais" contendo uma lista
+ *  - produto.adicionais é JsonElement ou String com os formatos acima
  */
 object AdicionaisRepo {
+    private const val TAG = "AdicionaisRepo"
+    private val gson by lazy { Gson() }
 
-    private val gson = Gson()
-
-    /** API simples que a UI usa. Hoje só lê do próprio produto. */
-    fun carregar(codigoProduto: Int, produto: ProdutoDto): List<GrupoAdicionalDto> =
-        fromProduto(produto)
-
-    /** Converte o campo `produto.adicionais` em grupos. */
     fun fromProduto(produto: ProdutoDto): List<GrupoAdicionalDto> {
-        val raiz = produto.adicionais ?: return emptyList()
+        val raw = produto.adicionais ?: return emptyList()
 
-        // 2) Já vem como lista de DTOs
-        if (raiz is List<*> && raiz.all { it is GrupoAdicionalDto }) {
-            @Suppress("UNCHECKED_CAST")
-            return raiz as List<GrupoAdicionalDto>
-        }
-
-        // 3) Lista de mapas (bruto)
-        if (raiz is List<*>) {
-            return raiz.mapNotNull { toGrupo(it) }
-        }
-
-        // 1) Envelope { "sucesso": [...] }
-        if (raiz is Map<*, *>) {
-            val sucesso = raiz["sucesso"]
-            if (sucesso is List<*>) {
-                return sucesso.mapNotNull { toGrupo(it) }
+        return try {
+            when (raw) {
+                is List<*> -> parseListAny(raw)
+                is Map<*, *> -> parseMapAny(raw)
+                is JsonElement -> parseJsonElement(raw)
+                is String -> parseString(raw)
+                else -> {
+                    Log.d(TAG, "Formato de adicionais não reconhecido: ${raw::class.java.simpleName}")
+                    emptyList()
+                }
             }
+        } catch (e: Exception) {
+            Log.w(TAG, "Falha ao converter adicionais do produto ${produto.codigo}: ${e.message}")
+            emptyList()
+        }
+    }
+
+    /* ----------------------------- Parsers ------------------------------ */
+
+    private fun parseString(s: String): List<GrupoAdicionalDto> {
+        val trimmed = s.trim()
+        if (trimmed.isEmpty()) return emptyList()
+        return try {
+            val je = JsonParser.parseString(trimmed)
+            parseJsonElement(je)
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    private fun parseJsonElement(el: JsonElement): List<GrupoAdicionalDto> {
+        if (el.isJsonNull) return emptyList()
+
+        // Tenta direto como lista de GrupoAdicionalDto
+        runCatching {
+            val listType = object : TypeToken<List<GrupoAdicionalDto>>() {}.type
+            return gson.fromJson<List<GrupoAdicionalDto>>(el, listType) ?: emptyList()
+        }
+
+        if (el.isJsonObject) {
+            val obj = el.asJsonObject
+            // Pode vir uma chave "grupos" ou "adicionais"
+            if (obj.has("grupos")) {
+                return parseJsonElement(obj.get("grupos"))
+            }
+            if (obj.has("adicionais")) {
+                return parseJsonElement(obj.get("adicionais"))
+            }
+
+            // Formato legado: lista de grupos com "grupo", "obrigatorio", "max", "opcoes"
+            return parseLegacyGroupsFromJsonObject(obj)
+        }
+
+        // Array genérico
+        if (el.isJsonArray) {
+            val arr = el.asJsonArray
+            val anyList = gson.fromJson<List<Any>>(arr, object : TypeToken<List<Any>>() {}.type)
+            return parseListAny(anyList)
         }
 
         return emptyList()
     }
 
-    /* --------- helpers de conversão --------- */
+    private fun parseLegacyGroupsFromJsonObject(obj: JsonObject): List<GrupoAdicionalDto> {
+        // Alguns ambientes aninham os grupos numa chave qualquer; tenta achar a primeira lista
+        val entryWithArray = obj.entrySet().firstOrNull { it.value.isJsonArray }
+        val arr = entryWithArray?.value ?: return emptyList()
+        return parseJsonElement(arr)
+    }
 
-    private fun toGrupo(any: Any?): GrupoAdicionalDto? {
-        if (any == null) return null
+    private fun parseListAny(list: List<*>): List<GrupoAdicionalDto> {
+        if (list.isEmpty()) return emptyList()
 
-        // já for DTO
-        if (any is GrupoAdicionalDto) return any
+        // Caso já seja a lista do tipo certo
+        if (list.first() is GrupoAdicionalDto) {
+            @Suppress("UNCHECKED_CAST")
+            return list as List<GrupoAdicionalDto>
+        }
 
-        if (any is Map<*, *>) {
-            val nome = (any["nome"] ?: any["grupo"]) as? String
-            val min  = (any["adicional_qtde_min"] as? Number)?.toInt() ?: 0
-            val max  = (any["adicional_qtde_max"] as? Number)?.toInt()
-            val obrig = if (min > 0) "S" else (any["obrigatorio"] as? String ?: "N")
+        // Lista de JsonObject / Map (formatos variados)
+        val out = ArrayList<GrupoAdicionalDto>()
+        list.forEachIndexed { index, item ->
+            when (item) {
+                is JsonElement -> out += parseOneFromJsonElement(item, index)
+                is Map<*, *>   -> parseOneFromMap(item, index)?.let { out += it }
+                is String      -> {
+                    val el = runCatching { JsonParser.parseString(item) }.getOrNull()
+                    if (el != null) out += parseOneFromJsonElement(el, index)
+                }
+            }
+        }
+        return out
+    }
 
-            // lista de opções pode vir em "adicionais" ou envelope { sucesso: [...] }
-            val opsRaw = when (val a = any["adicionais"]) {
-                is List<*> -> a
-                is Map<*, *> -> a["sucesso"] as? List<*>
+    private fun parseMapAny(map: Map<*, *>): List<GrupoAdicionalDto> {
+        // Map pode ter "grupos" ou "adicionais" dentro
+        val inner = when {
+            map.containsKey("grupos")     -> map["grupos"]
+            map.containsKey("adicionais") -> map["adicionais"]
+            else -> null
+        }
+        return when (inner) {
+            is List<*>       -> parseListAny(inner)
+            is JsonElement   -> parseJsonElement(inner)
+            is String        -> parseString(inner)
+            is Map<*, *>     -> parseMapAny(inner)
+            else             -> emptyList()
+        }
+    }
+
+    private fun parseOneFromJsonElement(el: JsonElement, index: Int): GrupoAdicionalDto {
+        // Tenta direto como GrupoAdicionalDto
+        runCatching {
+            return gson.fromJson(el, GrupoAdicionalDto::class.java)
+        }
+
+        // Se for objeto, tenta como legado
+        if (el.isJsonObject) {
+            val obj = el.asJsonObject
+            val nome = obj.getAsStringOrNull("nome")
+                ?: obj.getAsStringOrNull("grupo")
+                ?: "Grupo ${index + 1}"
+
+            val obrigatorio = obj.getAsStringOrNull("obrigatorio")?.equals("S", true)
+                ?: obj.getAsBooleanOrNull("obrigatorio")
+                ?: false
+
+            val max = obj.getAsIntOrNull("max")
+                ?: obj.getAsIntOrNull("adicional_qtde_max")
+
+            val min = obj.getAsIntOrNull("adicional_qtde_min")
+                ?: (if (obrigatorio) 1 else 0)
+
+            val ordem = obj.getAsIntOrNull("ordem") ?: (index + 1)
+
+            val opcoesEl = when {
+                obj.has("opcoes")     -> obj.get("opcoes")
+                obj.has("adicionais") -> obj.get("adicionais")
                 else -> null
-            }.orEmpty()
+            }
 
-            val opcoes = opsRaw.mapNotNull { toOpcao(it) }
+            val opcoes: List<AdicionalItemDto> = when {
+                opcoesEl == null || opcoesEl.isJsonNull -> emptyList()
+                opcoesEl.isJsonArray -> {
+                    val listType = object : TypeToken<List<AdicionalItemDto>>() {}.type
+                    runCatching { gson.fromJson<List<AdicionalItemDto>>(opcoesEl, listType) }
+                        .getOrDefault(emptyList())
+                }
+                else -> emptyList()
+            }
+
+            val codigo = obj.getAsIntOrNull("codigo") ?: -(index + 1)
 
             return GrupoAdicionalDto(
-                grupo = nome ?: "Adicionais",
-                obrigatorio = obrig,
-                max = max,
-                opcoes = opcoes
+                codigo = codigo,
+                produtos_codigo = obj.getAsIntOrNull("produtos_codigo"),
+                nome = nome,
+                adicional_qtde_min = min,
+                adicional_qtde_max = max,
+                adicional_juncao = obj.getAsStringOrNull("adicional_juncao"),
+                sabor_pizza = obj.getAsStringOrNull("sabor_pizza"),
+                ordem = ordem,
+                descricao = obj.getAsStringOrNull("descricao"),
+                adicionais = opcoes
             )
         }
 
-        // fallback genérico via Gson
-        return runCatching {
-            gson.fromJson(gson.toJsonTree(any), GrupoAdicionalDto::class.java)
-        }.getOrNull()
+        // Fallback vazio
+        return GrupoAdicionalDto(
+            codigo = -(index + 1),
+            produtos_codigo = null,
+            nome = "Grupo ${index + 1}",
+            adicionais = emptyList()
+        )
     }
 
-    private fun toOpcao(any: Any?): OpcaoAdicionalDto? {
-        if (any == null) return null
-
-        if (any is OpcaoAdicionalDto) return any
-
-        if (any is Map<*, *>) {
-            return runCatching {
-                gson.fromJson(gson.toJsonTree(any), OpcaoAdicionalDto::class.java)
-            }.getOrNull()
-        }
-
-        return runCatching {
-            gson.fromJson(gson.toJsonTree(any), OpcaoAdicionalDto::class.java)
-        }.getOrNull()
+    private fun parseOneFromMap(map: Map<*, *>, index: Int): GrupoAdicionalDto? {
+        // Transforma num JsonObject para reutilizar a lógica acima
+        val json = gson.toJsonTree(map)
+        return parseOneFromJsonElement(json, index)
     }
 }
+
+/* --------------------------- Helpers JsonObject --------------------------- */
+
+private fun JsonObject.getAsStringOrNull(key: String): String? =
+    runCatching { this.get(key)?.takeIf { !it.isJsonNull }?.asString?.trim()?.takeIf { it.isNotEmpty() } }.getOrNull()
+
+private fun JsonObject.getAsIntOrNull(key: String): Int? =
+    runCatching {
+        val el = this.get(key) ?: return null
+        when {
+            el.isJsonNull -> null
+            el.isJsonPrimitive && el.asJsonPrimitive.isNumber -> el.asInt
+            el.isJsonPrimitive && el.asJsonPrimitive.isString -> el.asString.trim().toIntOrNull()
+            else -> null
+        }
+    }.getOrNull()
+
+private fun JsonObject.getAsBooleanOrNull(key: String): Boolean? =
+    runCatching {
+        val el = this.get(key) ?: return null
+        when {
+            el.isJsonNull -> null
+            el.isJsonPrimitive && el.asJsonPrimitive.isBoolean -> el.asBoolean
+            el.isJsonPrimitive && el.asJsonPrimitive.isString -> {
+                val s = el.asString.trim().lowercase()
+                when (s) {
+                    "s", "sim", "true", "1" -> true
+                    "n", "nao", "não", "false", "0" -> false
+                    else -> null
+                }
+            }
+            else -> null
+        }
+    }.getOrNull()
