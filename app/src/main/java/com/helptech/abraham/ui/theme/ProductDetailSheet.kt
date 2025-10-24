@@ -6,6 +6,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -24,6 +25,7 @@ import com.helptech.abraham.data.remote.AdicionalItemDto
 import com.helptech.abraham.data.remote.GrupoAdicionalDto
 import com.helptech.abraham.data.remote.OpcaoAdicionalDto
 import com.helptech.abraham.data.remote.ProdutoDto
+import com.helptech.abraham.data.remote.preco
 import com.helptech.abraham.network.buscarFotoPrincipal
 
 /** Retorno do sheet: quantidade e as opções escolhidas por grupo. */
@@ -32,9 +34,8 @@ data class ProdutoEscolhido(
     val escolhas: Map<String, List<OpcaoAdicionalDto>>
 )
 
-/* Paleta local (compatível com os prints do Abrahão) */
+/* Paleta local */
 private val Orange = Color(0xFFF57C00)
-private val PanelBg = Color(0xFF1F2226)
 private val CardBg  = Color(0xFFF5F6F8)
 private val Muted   = Color(0xFF5F6368)
 
@@ -47,21 +48,18 @@ fun ProductDetailSheet(
     onConfirm: (ProdutoEscolhido) -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    // Dentro de LaunchedEffect já é uma corrotina; não precisa de scope.launch
     LaunchedEffect(Unit) { sheetState.expand() }
 
     // ====== Estado ======
     var quantidade by remember { mutableStateOf(1) }
     var observacao by remember { mutableStateOf("") }
     var fotoUrl by remember(produto.codigo) { mutableStateOf<String?>(null) }
-    LaunchedEffect(produto.codigo) {
-        fotoUrl = try { buscarFotoPrincipal(produto.codigo) } catch (_: Exception) { null }
-    }
+    LaunchedEffect(produto.codigo) { fotoUrl = try { buscarFotoPrincipal(produto.codigo) } catch (_: Exception) { null } }
 
-    // chave dos grupos (nome ou "Grupo #")
+    // chave dos grupos
     fun gKey(g: GrupoAdicionalDto, idx: Int) = g.nome.takeIf { it.isNotBlank() } ?: "Grupo ${idx + 1}"
 
-    // Seleções por grupo (AdicionalItemDto); convertidas no confirmar
+    // Seleções por grupo (AdicionalItemDto)
     val selecoes: MutableMap<String, SnapshotStateList<AdicionalItemDto>> =
         remember(grupos) {
             mutableStateMapOf<String, SnapshotStateList<AdicionalItemDto>>().apply {
@@ -73,14 +71,12 @@ fun ProductDetailSheet(
     val stepsLabels: List<String> = remember(grupos) { grupos.mapIndexed { i, g -> gKey(g, i) } + "Quantidade" }
     var currentStep by remember { mutableStateOf(0) }
 
-    // Preço dinâmico (somando valor/valorAd das opções)
+    // Preço dinâmico
     val adicionalUnit by remember(selecoes) {
-        derivedStateOf {
-            selecoes.values.flatten().sumOf { (((it.valorAd ?: it.valor) ?: 0.0)) }
-        }
+        derivedStateOf { selecoes.values.flatten().sumOf { it.preco } }
     }
-    val precoUnit: Double = (produto.valor ?: 0.0) + adicionalUnit
-    val total: Double = precoUnit * quantidade.toDouble()
+    val precoUnit = (produto.valor ?: 0.0) + adicionalUnit
+    val total = precoUnit * quantidade
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -147,7 +143,7 @@ fun ProductDetailSheet(
                     border = BorderStroke(1.dp, Color(0x22000000)),
                     modifier = Modifier
                         .weight(1f)
-                        .heightIn(min = 200.dp, max = 460.dp)
+                        .heightIn(min = 200.dp, max = 460.dp) // limite de altura -> rola dentro
                 ) {
                     when {
                         currentStep < grupos.size -> {
@@ -238,8 +234,8 @@ private fun StepTile(index: Int, label: String, selected: Boolean, onClick: () -
             .fillMaxWidth()
             .height(IntrinsicSize.Min)
             .clip(MaterialTheme.shapes.medium)
+            .clickable { onClick() }
             .background(bg)
-            .clickable { onClick() }   // precisa do import de clickable
             .padding(horizontal = 10.dp, vertical = 8.dp)
     ) {
         Surface(shape = CircleShape, color = if (selected) Orange else Color(0xFFD8DCE3)) {
@@ -263,46 +259,59 @@ private fun GrupoEtapa(
     val max = grupo.adicional_qtde_max ?: 0
 
     Column(
-        Modifier
+        modifier = Modifier
             .fillMaxSize()
-            .padding(14.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
+            .padding(14.dp)
     ) {
+        // Cabeçalho
         Text(titulo, fontWeight = FontWeight.Bold)
         val regra = buildString {
-            if (min > 0 || max > 0) {
-                append("Você pode escolher ")
-                if (min > 0 && max > 0) append("de $min a $max itens")
-                else if (min > 0) append("no mínimo $min item(s)")
-                else append("até $max itens")
+            val sItem = { q: Int -> if (q == 1) "item" else "itens" }
+            when {
+                min > 0 && max > 0 -> append("Você pode escolher de $min a $max ${sItem(max)}")
+                min > 0            -> append("Você deve escolher no mínimo $min ${sItem(min)}")
+                max > 0            -> append("Você pode escolher até $max ${sItem(max)}")
             }
         }
-        if (regra.isNotBlank()) Text(regra, color = Muted, style = MaterialTheme.typography.bodySmall)
+        if (regra.isNotBlank()) {
+            Spacer(Modifier.height(2.dp))
+            Text(regra, color = Muted, style = MaterialTheme.typography.bodySmall)
+        }
 
-        Spacer(Modifier.height(6.dp))
-        grupo.adicionais.forEach { opc ->
-            val checked = selecionadas.any { it.codigo == opc.codigo }
-            val nome = opc.nome.ifBlank { "Opção" }
-            val preco = ((opc.valorAd ?: opc.valor) ?: 0.0)
-            val tituloOpc = if (preco > 0.0) "$nome    (+ ${formatMoneyUi(preco)})" else nome
+        Spacer(Modifier.height(8.dp))
 
-            if (max <= 1) {
+        // LISTA COM SCROLL (soluciona o overflow nos sabores de pizza)
+        val listState = rememberLazyListState()
+        LazyColumn(
+            state = listState,
+            modifier = Modifier
+                .weight(1f)  // ocupa o espaço e ativa rolagem
+                .fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+            contentPadding = PaddingValues(bottom = 6.dp)
+        ) {
+            items(items = grupo.adicionais, key = { it.codigo }) { opc ->
+                val checked = selecionadas.any { it.codigo == opc.codigo }
+                val nome = opc.nome.ifBlank { "Opção" }
+                val preco = opc.preco
+                val precoTxt = if (preco > 0.0) "  (+ ${formatMoneyUi(preco)})" else ""
+
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    RadioButton(
-                        selected = checked,
-                        onClick = { onSelect(opc) },
-                        colors = RadioButtonDefaults.colors(selectedColor = Orange)
-                    )
-                    Text(tituloOpc, modifier = Modifier.padding(start = 8.dp))
-                }
-            } else {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(
-                        checked = checked,
-                        onCheckedChange = { onSelect(opc) },
-                        colors = CheckboxDefaults.colors(checkedColor = Orange)
-                    )
-                    Text(tituloOpc, modifier = Modifier.padding(start = 8.dp))
+                    if (max <= 1) {
+                        RadioButton(
+                            selected = checked,
+                            onClick = { onSelect(opc) },
+                            colors = RadioButtonDefaults.colors(selectedColor = Orange)
+                        )
+                    } else {
+                        Checkbox(
+                            checked = checked,
+                            onCheckedChange = { onSelect(opc) },
+                            colors = CheckboxDefaults.colors(checkedColor = Orange)
+                        )
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    Text(nome + precoTxt)
                 }
             }
         }
