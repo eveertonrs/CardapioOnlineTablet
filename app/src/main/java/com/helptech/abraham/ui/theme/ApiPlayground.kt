@@ -7,24 +7,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Remove
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Divider
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilledTonalButton
-import androidx.compose.material3.LocalTextStyle
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
@@ -37,8 +20,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
 import com.google.gson.Gson
 import com.google.gson.GsonBuilder
@@ -58,8 +39,20 @@ import com.helptech.abraham.network.buscarFotoPrincipal
 import com.helptech.abraham.settings.AppSettings
 import com.helptech.abraham.settings.DeviceRole
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+// Ícones (Add/Remove) usados no Stepper
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Remove
+
+// Dialog do Compose (não o android.app.Dialog)
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.compose.foundation.lazy.rememberLazyListState
+
+
 
 /* =========================================================
  *  Cores / Constantes
@@ -392,8 +385,7 @@ private fun Stepper(value: Int, onMinus: () -> Unit, onPlus: () -> Unit) {
     }
 }
 
-@Composable
-private fun IconButton(onClick: () -> Unit, modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+@Composable private fun IconButton(onClick: () -> Unit, modifier: Modifier = Modifier, content: @Composable () -> Unit) {
     androidx.compose.material3.IconButton(onClick = onClick, modifier = modifier, content = content)
 }
 
@@ -402,8 +394,7 @@ private fun formatMoneyLocal(valor: Double?): String {
     return "R$ " + "%,.2f".format(v).replace(',', 'X').replace('.', ',').replace('X', '.')
 }
 
-@Composable
-private fun base64ToImageBitmapOrNull(@Suppress("UNUSED_PARAMETER") base64: String)
+@Composable private fun base64ToImageBitmapOrNull(@Suppress("UNUSED_PARAMETER") base64: String)
         : androidx.compose.ui.graphics.ImageBitmap? = null
 
 /* =========================================================
@@ -435,6 +426,7 @@ fun ApiPlayground() {
     val scope = rememberCoroutineScope()
     var submitting by remember { mutableStateOf(false) }
     var statusMsg by remember { mutableStateOf<String?>(null) }
+    var autoCloseSeconds by remember { mutableStateOf<Int?>(null) } // contador p/ garçom
 
     var reloadKey by remember { mutableStateOf(0) }
 
@@ -534,8 +526,10 @@ fun ApiPlayground() {
                                 val r = chamarGarcom(mesaLabel)
                                 r.onSuccess {
                                     statusMsg = "Chamado enviado! Um garçom irá até $headerLabel."
+                                    autoCloseSeconds = 10 // fecha automático em 10s
                                 }.onFailure { e ->
                                     statusMsg = "Não consegui chamar o garçom: ${e.message ?: "verifique conexão/endpoint"}"
+                                    autoCloseSeconds = 10
                                 }
                                 submitting = false
                             }
@@ -544,12 +538,7 @@ fun ApiPlayground() {
                             scope.launch {
                                 submitting = true
 
-                                // usa a mesa/conta atual
-                                val contaStr = if (role == DeviceRole.BALCAO)
-                                    "BALCÃO"
-                                else
-                                    (tableNumber ?: 1).toString()
-
+                                val contaStr = if (role == DeviceRole.BALCAO) "BALCÃO" else tableNumber.toString()
                                 val result = runCatching {
                                     IntegracaoService.consultarConsumoJson(contaStr)
                                 }.fold(
@@ -557,36 +546,33 @@ fun ApiPlayground() {
                                     onFailure = { e ->
                                         submitting = false
                                         statusMsg = "Não consegui consultar a conta: ${e.message ?: "verifique conexão/endpoint"}"
+                                        autoCloseSeconds = null // não auto-fecha na minha conta
                                         return@launch
                                     }
                                 )
 
-                                result
-                                    .onSuccess { obj ->
-                                        myBillJson = obj
-                                        if (obj == null) {
-                                            statusMsg = "Consulta ok, mas não recebi um objeto JSON válido para exibir."
-                                        }
+                                result.onSuccess { obj ->
+                                    myBillJson = obj
+                                    if (obj == null) {
+                                        statusMsg = "Consulta ok, mas não recebi um objeto JSON válido para exibir."
+                                        autoCloseSeconds = null
                                     }
-                                    .onFailure { e ->
-                                        statusMsg = "Não consegui consultar a conta: ${e.message ?: "verifique conexão/endpoint"}"
-                                    }
+                                }.onFailure { e ->
+                                    statusMsg = "Não consegui consultar a conta: ${e.message ?: "verifique conexão/endpoint"}"
+                                    autoCloseSeconds = null
+                                }
 
                                 submitting = false
                             }
                         },
-                                onOpenMesaDialog = { showMesaDialog = true }
+                        onOpenMesaDialog = { showMesaDialog = true }
                     )
                 }
                 Screen.CART -> {
-                    val itens: List<CartItem> = remember(cart.toMap()) {
-                        cart.values.toList()
-                    }
+                    val itens: List<CartItem> = remember(cart.toMap()) { cart.values.toList() }
                     CartPage(
                         itens = itens,
-                        onAdd = { it ->
-                            cart[it.key] = it.copy(quantidade = it.quantidade + 1)
-                        },
+                        onAdd = { it -> cart[it.key] = it.copy(quantidade = it.quantidade + 1) },
                         onRemove = { it ->
                             val q = it.quantidade - 1
                             if (q <= 0) cart.remove(it.key) else cart[it.key] = it.copy(quantidade = q)
@@ -618,27 +604,27 @@ fun ApiPlayground() {
                                     obsPedido = cartObs
                                 )
 
-                                result
-                                    .onSuccess { el: JsonElement? ->
-                                        val pedidoId = when {
-                                            el == null -> null
-                                            el.isJsonPrimitive -> el.asString
-                                            el.isJsonObject && el.asJsonObject.has("codigo") ->
-                                                el.asJsonObject.get("codigo").asString
-                                            else -> null
-                                        }
-                                        statusMsg = if (pedidoId.isNullOrBlank())
-                                            "Pedido enviado com sucesso!"
-                                        else
-                                            "Pedido enviado com sucesso! Nº: $pedidoId"
+                                result.onSuccess { el: JsonElement? ->
+                                    val pedidoId = when {
+                                        el == null -> null
+                                        el.isJsonPrimitive -> el.asString
+                                        el.isJsonObject && el.asJsonObject.has("codigo") ->
+                                            el.asJsonObject.get("codigo").asString
+                                        else -> null
+                                    }
+                                    statusMsg = if (pedidoId.isNullOrBlank())
+                                        "Pedido enviado com sucesso!"
+                                    else
+                                        "Pedido enviado com sucesso! Nº: $pedidoId"
 
-                                        cart.clear()
-                                        cartObs = ""
-                                        screen = Screen.MENU
-                                    }
-                                    .onFailure { e: Throwable ->
-                                        statusMsg = "Falha ao enviar pedido: ${e.message ?: "erro desconhecido"}"
-                                    }
+                                    autoCloseSeconds = null
+                                    cart.clear()
+                                    cartObs = ""
+                                    screen = Screen.MENU
+                                }.onFailure { e: Throwable ->
+                                    statusMsg = "Falha ao enviar pedido: ${e.message ?: "erro desconhecido"}"
+                                    autoCloseSeconds = null
+                                }
 
                                 submitting = false
                             }
@@ -691,33 +677,64 @@ fun ApiPlayground() {
         }
     }
 
+    /* ---------- Status dialog (com auto-close opcional para Garçom) ---------- */
     if (statusMsg != null) {
+        // contador
+        LaunchedEffect(statusMsg, autoCloseSeconds) {
+            val start = autoCloseSeconds
+            if (start != null && start > 0) {
+                var s = start
+                while (s > 0 && statusMsg != null) {
+                    delay(1000); s -= 1; autoCloseSeconds = s
+                }
+                if (s == 0) { statusMsg = null; autoCloseSeconds = null }
+            }
+        }
+
         AlertDialog(
-            onDismissRequest = { statusMsg = null },
-            confirmButton = { TextButton(onClick = { statusMsg = null }) { Text("OK") } },
+            onDismissRequest = { statusMsg = null; autoCloseSeconds = null },
+            confirmButton = {
+                TextButton(onClick = { statusMsg = null; autoCloseSeconds = null }) {
+                    Text(if (autoCloseSeconds != null) "OK (${autoCloseSeconds}s)" else "OK")
+                }
+            },
             title = { Text("Status") },
-            text = { Text(statusMsg ?: "") }
+            text = {
+                Column {
+                    Text(statusMsg ?: "")
+                    if (autoCloseSeconds != null) {
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "Esta mensagem será fechada automaticamente.",
+                            color = Color(0xFF6B7280),
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
+            }
         )
     }
 
     // Diálogo "Minha conta" — versão redesenhada
     myBillJson?.let { obj ->
-        MyBillDialog(
-            root = obj,
-            onDismiss = { myBillJson = null }
-        )
+        MyBillDialog(root = obj, onDismiss = { myBillJson = null })
     }
 
-    // Diálogo de troca de mesa
+    // Diálogo de troca/atualização de mesa
     if (showMesaDialog) {
         MesaOptionsDialog(
-            currentTable = tableNumber ?: 1,
+            currentTable = tableNumber,
             onDismiss = { showMesaDialog = false },
             onConfirm = { novaMesa ->
                 scope.launch {
-                    AppSettings.saveMesa(ctx, novaMesa) // usa o ctx capturado (evita erro de @Composable)
+                    AppSettings.saveMesa(ctx, novaMesa)
                     showMesaDialog = false
                 }
+            },
+            onRefreshItems = {
+                // força recarregar catálogo (imagens e nomes atualizados)
+                reloadKey++
+                showMesaDialog = false
             }
         )
     }
@@ -727,26 +744,26 @@ fun ApiPlayground() {
 
 @Composable
 private fun MyBillDialog(root: JsonObject, onDismiss: () -> Unit) {
-    // Paleta clara local (independe do tema escuro do app)
-    val Panel        = Color(0xFFF7F8FA)
-    val Card         = Color.White
-    val CardAlt      = Color(0xFFF1F3F6)
-    val TextPrimary  = Color(0xFF111827)
-    val TextSecondary= Color(0xFF6B7280)
-    val LightDivider = Color(0xFFE5E7EB)
+    val Panel         = Color(0xFFF7F8FA)
+    val Card          = Color.White
+    val CardAlt       = Color(0xFFF1F3F6)   // <— usar este, não CardAltBg
+    val TextPrimary   = Color(0xFF111827)
+    val TextSecondary = Color(0xFF6B7280)
+    val LightDivider  = Color(0xFFE5E7EB)
+    val Orange        = Color(0xFFF57C00)
 
-    val conta = root.get("Conta").asStringOrNull()
+    val conta   = root.get("Conta").asStringOrNull()
     val cliente = root.get("Cliente").asJsonObjectOrNull()
-    val nome = cliente?.get("Nome").asStringOrNull()
-    val doc  = cliente?.get("Documento").asStringOrNull()
-    val tel  = cliente?.get("Telefone").asStringOrNull()
+    val nome    = cliente?.get("Nome").asStringOrNull()
+    val doc     = cliente?.get("Documento").asStringOrNull()
+    val tel     = cliente?.get("Telefone").asStringOrNull()
 
     val taxaRemovida = cliente?.get("TaxaServicoRemovida").asBooleanOrNull() ?: false
-    val taxa     = cliente?.get("TaxaServico").asDoubleOrNull()
-    val descontos= cliente?.get("ValorDescontos").asDoubleOrNull()
-    val brindes  = cliente?.get("ValorBrindes").asDoubleOrNull()
-    val consMin  = cliente?.get("ConsumacaoMinima").asDoubleOrNull()
-    val total    = cliente?.get("Total").asDoubleOrNull()
+    val taxa      = cliente?.get("TaxaServico").asDoubleOrNull()
+    val descontos = cliente?.get("ValorDescontos").asDoubleOrNull()
+    val brindes   = cliente?.get("ValorBrindes").asDoubleOrNull()
+    val consMin   = cliente?.get("ConsumacaoMinima").asDoubleOrNull()
+    val total     = cliente?.get("Total").asDoubleOrNull()
 
     val itens = root.get("Itens").asJsonArrayOrNull()
 
@@ -758,9 +775,9 @@ private fun MyBillDialog(root: JsonObject, onDismiss: () -> Unit) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(min = 0.dp, max = 520.dp)
+                    .heightIn(min = 0.dp, max = 520.dp) // corpo do diálogo
             ) {
-                // Cabeçalho
+                // Cabeçalho (conta + cliente)
                 Surface(
                     color = Card,
                     shape = MaterialTheme.shapes.large,
@@ -793,12 +810,7 @@ private fun MyBillDialog(root: JsonObject, onDismiss: () -> Unit) {
                         Spacer(Modifier.height(8.dp))
 
                         @Composable
-                        fun Line(
-                            label: String,
-                            value: String,
-                            strong: Boolean = false,
-                            muted: Boolean = false
-                        ) {
+                        fun Line(label: String, value: String, strong: Boolean = false, muted: Boolean = false) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -833,7 +845,7 @@ private fun MyBillDialog(root: JsonObject, onDismiss: () -> Unit) {
                     }
                 }
 
-                // Itens
+                // Itens (lista rolável)
                 if (itens != null && itens.size() > 0) {
                     Spacer(Modifier.height(12.dp))
                     Text("Itens", color = TextPrimary, fontWeight = FontWeight.SemiBold)
@@ -850,7 +862,7 @@ private fun MyBillDialog(root: JsonObject, onDismiss: () -> Unit) {
                             val desc = el?.get("Descricao").asStringOrNull()
                             val qtde = el?.get("Quantidade").asDoubleOrNull()?.toInt() ?: 0
                             val totalItem = el?.get("ValorTotal").asDoubleOrNull()
-                            val rowBg = if (idx % 2 == 0) Card else CardAlt
+                            val rowBg = if (idx % 2 == 0) Card else CardAlt   // <— corrigido
 
                             Surface(
                                 color = rowBg,
@@ -865,18 +877,14 @@ private fun MyBillDialog(root: JsonObject, onDismiss: () -> Unit) {
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Text(prod, color = TextPrimary, fontWeight = FontWeight.SemiBold)
-                                        Text(
-                                            totalItem?.let { formatMoneyLocal(it) } ?: "—",
-                                            color = Orange,
-                                            fontWeight = FontWeight.Bold
-                                        )
+                                        Text(totalItem?.let { formatMoneyLocal(it) } ?: "—",
+                                            color = Orange, fontWeight = FontWeight.Bold)
                                     }
                                     desc?.takeIf { it.isNotBlank() }?.let {
                                         Spacer(Modifier.height(2.dp))
                                         Text(it, color = TextSecondary, style = MaterialTheme.typography.bodySmall)
                                     }
                                     Spacer(Modifier.height(6.dp))
-                                    // badge de quantidade
                                     Surface(
                                         shape = CircleShape,
                                         color = Color(0x143B82F6),
@@ -904,8 +912,6 @@ private fun MyBillDialog(root: JsonObject, onDismiss: () -> Unit) {
     )
 }
 
-// helper para não imprimir linhas “0,00”
-private fun descontinuos(v: Double) = v != 0.0
 
 /* ----------- Loading sheet ----------- */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -913,7 +919,7 @@ private fun descontinuos(v: Double) = v != 0.0
 fun LoadingBottomSheet(onDismiss: () -> Unit) {
     ModalBottomSheet(
         onDismissRequest = onDismiss,
-        dragHandle = { androidx.compose.material3.BottomSheetDefaults.DragHandle() }
+        dragHandle = { BottomSheetDefaults.DragHandle() }
     ) {
         Column(
             modifier = Modifier
@@ -929,12 +935,13 @@ fun LoadingBottomSheet(onDismiss: () -> Unit) {
     }
 }
 
-/* ----------- Diálogo de opções da mesa (com PIN) ----------- */
+/* ----------- Diálogo de opções da mesa (com PIN + Atualizar Itens) ----------- */
 @Composable
 fun MesaOptionsDialog(
     currentTable: Int,
     onDismiss: () -> Unit,
-    onConfirm: (Int) -> Unit
+    onConfirm: (Int) -> Unit,
+    onRefreshItems: () -> Unit
 ) {
     var selected by remember { mutableStateOf(currentTable) }
     var pin by remember { mutableStateOf("") }
@@ -984,6 +991,8 @@ fun MesaOptionsDialog(
                 Spacer(Modifier.height(16.dp))
                 Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
                     TextButton(onClick = onDismiss) { Text("Cancelar") }
+                    Spacer(Modifier.width(8.dp))
+                    FilledTonalButton(onClick = onRefreshItems) { Text("Atualizar Itens") }
                     Spacer(Modifier.width(8.dp))
                     Button(onClick = {
                         if (pin == ADMIN_PIN) onConfirm(selected)

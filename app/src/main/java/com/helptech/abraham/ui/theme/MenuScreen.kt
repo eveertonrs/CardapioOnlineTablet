@@ -103,7 +103,7 @@ fun MenuScreenHost(
         }
 
         when (val g = gruposSel) {
-            null -> ProductDetailLoading(onDismiss = fechar)
+            null -> LoadingBottomSheet(onDismiss = fechar)
             else -> ProductDetailSheet(
                 produto = p,
                 grupos = g,
