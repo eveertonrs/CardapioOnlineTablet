@@ -20,6 +20,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
 import com.helptech.abraham.data.remote.AdicionalItemDto
 import com.helptech.abraham.data.remote.GrupoAdicionalDto
@@ -27,6 +29,10 @@ import com.helptech.abraham.data.remote.OpcaoAdicionalDto
 import com.helptech.abraham.data.remote.ProdutoDto
 import com.helptech.abraham.data.remote.preco
 import com.helptech.abraham.network.buscarFotoPrincipal
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.unit.dp
+
+
 
 /** Retorno do sheet: quantidade e as opções escolhidas por grupo. */
 data class ProdutoEscolhido(
@@ -39,7 +45,6 @@ private val Orange = Color(0xFFF57C00)
 private val CardBg  = Color(0xFFF5F6F8)
 private val Muted   = Color(0xFF5F6368)
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ProductDetailSheet(
     produto: ProdutoDto,
@@ -47,9 +52,6 @@ fun ProductDetailSheet(
     onDismiss: () -> Unit,
     onConfirm: (ProdutoEscolhido) -> Unit
 ) {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    LaunchedEffect(Unit) { sheetState.expand() }
-
     // ====== Estado ======
     var quantidade by remember { mutableStateOf(1) }
     var observacao by remember { mutableStateOf("") }
@@ -59,7 +61,7 @@ fun ProductDetailSheet(
     // chave dos grupos
     fun gKey(g: GrupoAdicionalDto, idx: Int) = g.nome.takeIf { it.isNotBlank() } ?: "Grupo ${idx + 1}"
 
-    // Seleções por grupo (AdicionalItemDto)
+    // Seleções por grupo (lista de AdicionalItemDto; duplicado = quantidade)
     val selecoes: MutableMap<String, SnapshotStateList<AdicionalItemDto>> =
         remember(grupos) {
             mutableStateMapOf<String, SnapshotStateList<AdicionalItemDto>>().apply {
@@ -78,144 +80,153 @@ fun ProductDetailSheet(
     val precoUnit = (produto.valor ?: 0.0) + adicionalUnit
     val total = precoUnit * quantidade
 
-    ModalBottomSheet(
+    // ====== FULL-SCREEN DIALOG ======
+    Dialog(
         onDismissRequest = onDismiss,
-        sheetState = sheetState,
-        dragHandle = { BottomSheetDefaults.DragHandle() },
-        scrimColor = Color(0x99000000),
-        containerColor = Color.White,
-        contentColor = Color(0xFF111111)
+        properties = DialogProperties(usePlatformDefaultWidth = false, dismissOnBackPress = true, dismissOnClickOutside = true)
     ) {
-        Column(
-            Modifier
-                .fillMaxWidth()
+        Surface(
+            modifier = Modifier
+                .fillMaxSize()
                 .navigationBarsPadding()
-                .imePadding()
-                .padding(12.dp)
+                .imePadding(),
+            color = Color.White,
+            contentColor = Color(0xFF111111),
+            shape = RoundedCornerShape(0.dp)
         ) {
-            // Cabeçalho com foto + título
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 4.dp)) {
-                AsyncImage(model = fotoUrl ?: produto.foto, contentDescription = null, modifier = Modifier.size(80.dp))
-                Spacer(Modifier.width(12.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(produto.nome, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    if (!produto.descricao.isNullOrBlank()) {
-                        Spacer(Modifier.height(4.dp)); Text(produto.descricao!!, color = Muted)
-                    }
-                    Spacer(Modifier.height(6.dp))
-                    Text(
-                        "R$ %,.2f".format(precoUnit).replace(',', 'X').replace('.', ',').replace('X', '.'),
-                        color = Orange, fontWeight = FontWeight.Black
-                    )
-                }
-            }
-
-            Spacer(Modifier.height(12.dp))
-            Divider()
-            Spacer(Modifier.height(8.dp))
-
-            // Corpo em 2 colunas: esquerda = etapas; direita = conteúdo do passo
-            Row(Modifier.fillMaxWidth()) {
-                // --- Lista de passos (esquerda) ---
-                LazyColumn(
-                    modifier = Modifier
-                        .width(260.dp)
-                        .heightIn(min = 0.dp, max = 460.dp)
-                        .padding(end = 12.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    items(stepsLabels.size) { idx ->
-                        val selected = idx == currentStep
-                        val label = stepsLabels[idx]
-                        StepTile(
-                            index = idx + 1,
-                            label = label,
-                            selected = selected,
-                            onClick = { currentStep = idx }
+            Column(Modifier.fillMaxSize().padding(12.dp)) {
+                // Cabeçalho com foto + título
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 4.dp)) {
+                    AsyncImage(model = fotoUrl ?: produto.foto, contentDescription = null, modifier = Modifier.size(80.dp))
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(produto.nome, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        if (!produto.descricao.isNullOrBlank()) {
+                            Spacer(Modifier.height(4.dp)); Text(produto.descricao!!, color = Muted)
+                        }
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            "R$ %,.2f".format(precoUnit).replace(',', 'X').replace('.', ',').replace('X', '.'),
+                            color = Orange, fontWeight = FontWeight.Black
                         )
                     }
+                    TextButton(onClick = onDismiss) { Text("Fechar") }
                 }
 
-                // --- Conteúdo do passo (direita) ---
-                Surface(
-                    color = CardBg,
-                    shape = MaterialTheme.shapes.large,
-                    border = BorderStroke(1.dp, Color(0x22000000)),
-                    modifier = Modifier
-                        .weight(1f)
-                        .heightIn(min = 200.dp, max = 460.dp) // limite de altura -> rola dentro
-                ) {
-                    when {
-                        currentStep < grupos.size -> {
-                            val g = grupos[currentStep]
-                            val key = gKey(g, currentStep)
-                            GrupoEtapa(
-                                grupo = g,
-                                selecionadas = selecoes[key].orEmpty(),
-                                onSelect = { opc ->
-                                    val max = g.adicional_qtde_max ?: 0
-                                    val lista = selecoes.getOrPut(key) { mutableStateListOf() }
-                                    if (max <= 1) {
-                                        lista.clear(); lista.add(opc)
-                                    } else {
-                                        val exists = lista.any { it.codigo == opc.codigo }
-                                        if (exists) lista.removeAll { it.codigo == opc.codigo }
-                                        else if (max == 0 || lista.size < max) lista.add(opc)
+                Spacer(Modifier.height(12.dp))
+                Divider()
+                Spacer(Modifier.height(8.dp))
+
+                // Corpo em 2 colunas: esquerda = etapas; direita = conteúdo do passo
+                Row(Modifier.fillMaxSize().weight(1f)) {
+                    // --- Lista de passos (esquerda) ---
+                    LazyColumn(
+                        modifier = Modifier
+                            .width(260.dp)
+                            .fillMaxHeight()
+                            .padding(end = 12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(stepsLabels.size) { idx ->
+                            val selected = idx == currentStep
+                            val label = stepsLabels[idx]
+                            StepTile(
+                                index = idx + 1,
+                                label = label,
+                                selected = selected,
+                                onClick = { currentStep = idx }
+                            )
+                        }
+                    }
+
+                    // --- Conteúdo do passo (direita) ---
+                    Surface(
+                        color = CardBg,
+                        shape = MaterialTheme.shapes.large,
+                        border = BorderStroke(1.dp, Color(0x22000000)),
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight()
+                    ) {
+                        when {
+                            currentStep < grupos.size -> {
+                                val g = grupos[currentStep]
+                                val key = gKey(g, currentStep)
+                                GrupoEtapa(
+                                    grupo = g,
+                                    selecionadas = selecoes[key].orEmpty(),
+                                    onChange = { opc, novoValor ->
+                                        val lista = selecoes.getOrPut(key) { mutableStateListOf() }
+                                        // total permitido no grupo (0 = sem limite)
+                                        val grupoMax = g.adicional_qtde_max ?: 0
+                                        val totalAtual = lista.size
+                                        val countAtual = lista.count { it.codigo == opc.codigo }
+
+                                        val limiteOpc = (opc.limite_adicao ?: 1).coerceAtLeast(1)
+                                        val novoCount = novoValor.coerceIn(0, limiteOpc)
+
+                                        // quanto cabe ainda pelo limite do grupo
+                                        val espacoGrupo = if (grupoMax > 0) (grupoMax - (totalAtual - countAtual)).coerceAtLeast(0) else Int.MAX_VALUE
+                                        val countAplicado = novoCount.coerceAtMost(espacoGrupo)
+
+                                        // aplica: remove todos daquela opção e reinsere countAplicado vezes
+                                        lista.removeAll { it.codigo == opc.codigo }
+                                        repeat(countAplicado) { lista.add(opc) }
                                     }
-                                }
-                            )
-                        }
-                        else -> {
-                            QuantidadeEtapa(
-                                quantidade = quantidade,
-                                onMinus = { if (quantidade > 1) quantidade-- },
-                                onPlus = { quantidade++ },
-                                observacao = observacao,
-                                onObservacao = { observacao = it }
-                            )
+                                )
+                            }
+                            else -> {
+                                QuantidadeEtapa(
+                                    quantidade = quantidade,
+                                    onMinus = { if (quantidade > 1) quantidade-- },
+                                    onPlus = { quantidade++ },
+                                    observacao = observacao,
+                                    onObservacao = { observacao = it }
+                                )
+                            }
                         }
                     }
                 }
-            }
 
-            Spacer(Modifier.height(12.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    "Subtotal  " + "R$ %,.2f".format(total).replace(',', 'X').replace('.', ',').replace('X', '.'),
-                    color = Color(0xFF111111), fontWeight = FontWeight.SemiBold
-                )
+                Spacer(Modifier.height(12.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "Subtotal  " + "R$ %,.2f".format(total).replace(',', 'X').replace('.', ',').replace('X', '.'),
+                        color = Color(0xFF111111), fontWeight = FontWeight.SemiBold
+                    )
 
-                if (currentStep < grupos.size) {
-                    val g = grupos[currentStep]
-                    val min = g.adicional_qtde_min ?: 0
-                    val selectedCount = selecoes[gKey(g, currentStep)].orEmpty().size
-                    val isOptional = min == 0
+                    if (currentStep < grupos.size) {
+                        val g = grupos[currentStep]
+                        val min = g.adicional_qtde_min ?: 0
+                        val selectedCount = selecoes[gKey(g, currentStep)].orEmpty().size
+                        val isOptional = min == 0
 
-                    Button(
-                        onClick = { currentStep++ },
-                        enabled = isOptional || selectedCount >= min,
-                        shape = MaterialTheme.shapes.large,
-                        colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Color.White)
-                    ) {
-                        Text(if (isOptional) "PULAR" else "AVANÇAR", fontWeight = FontWeight.SemiBold)
-                    }
-                } else {
-                    Button(
-                        onClick = {
-                            // Converte seleções para OpcaoAdicionalDto
-                            val mapa: Map<String, List<OpcaoAdicionalDto>> = selecoes.mapValues { (_, lista) ->
-                                lista.map { it.asOpcao() }
-                            }
-                            onConfirm(ProdutoEscolhido(quantidade = quantidade, escolhas = mapa))
-                        },
-                        shape = MaterialTheme.shapes.large,
-                        colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Color.White)
-                    ) {
-                        Text("ADICIONAR AO CARRINHO", fontWeight = FontWeight.Bold)
+                        Button(
+                            onClick = { currentStep++ },
+                            enabled = isOptional || selectedCount >= min,
+                            shape = MaterialTheme.shapes.large,
+                            colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Color.White)
+                        ) {
+                            Text(if (isOptional) "PULAR" else "AVANÇAR", fontWeight = FontWeight.SemiBold)
+                        }
+                    } else {
+                        Button(
+                            onClick = {
+                                // Converte seleções para OpcaoAdicionalDto (duplicadas = quantidade da opção)
+                                val mapa: Map<String, List<OpcaoAdicionalDto>> = selecoes.mapValues { (_, lista) ->
+                                    lista.map { it.asOpcao() }
+                                }
+                                onConfirm(ProdutoEscolhido(quantidade = quantidade, escolhas = mapa))
+                            },
+                            shape = MaterialTheme.shapes.large,
+                            colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Color.White)
+                        ) {
+                            Text("ADICIONAR AO CARRINHO", fontWeight = FontWeight.Bold)
+                        }
                     }
                 }
             }
@@ -252,11 +263,22 @@ private fun StepTile(index: Int, label: String, selected: Boolean, onClick: () -
 private fun GrupoEtapa(
     grupo: GrupoAdicionalDto,
     selecionadas: List<AdicionalItemDto>,
-    onSelect: (AdicionalItemDto) -> Unit
+    onChange: (AdicionalItemDto, Int) -> Unit
 ) {
     val titulo = grupo.nome.ifBlank { "Adicionais" }
     val min = grupo.adicional_qtde_min ?: 0
-    val max = grupo.adicional_qtde_max ?: 0
+    val maxGrupo = grupo.adicional_qtde_max ?: 0
+
+    // helpers
+    fun countOf(opc: AdicionalItemDto) = selecionadas.count { it.codigo == opc.codigo }
+    fun totalGrupo() = selecionadas.size
+    fun podeAdicionar(opc: AdicionalItemDto): Boolean {
+        val limiteOpc = (opc.limite_adicao ?: 1).coerceAtLeast(1)
+        val atualOpc = countOf(opc)
+        val roomOpc = atualOpc < limiteOpc
+        val roomGrupo = if (maxGrupo > 0) totalGrupo() < maxGrupo else true
+        return roomOpc && roomGrupo
+    }
 
     Column(
         modifier = Modifier
@@ -268,9 +290,9 @@ private fun GrupoEtapa(
         val regra = buildString {
             val sItem = { q: Int -> if (q == 1) "item" else "itens" }
             when {
-                min > 0 && max > 0 -> append("Você pode escolher de $min a $max ${sItem(max)}")
-                min > 0            -> append("Você deve escolher no mínimo $min ${sItem(min)}")
-                max > 0            -> append("Você pode escolher até $max ${sItem(max)}")
+                min > 0 && maxGrupo > 0 -> append("Você pode escolher de $min a $maxGrupo ${sItem(maxGrupo)}")
+                min > 0                  -> append("Você deve escolher no mínimo $min ${sItem(min)}")
+                maxGrupo > 0             -> append("Você pode escolher até $maxGrupo ${sItem(maxGrupo)}")
             }
         }
         if (regra.isNotBlank()) {
@@ -280,35 +302,55 @@ private fun GrupoEtapa(
 
         Spacer(Modifier.height(8.dp))
 
-        // LISTA COM SCROLL (soluciona o overflow nos sabores de pizza)
+        // LISTA COM SCROLL (soluciona overflow)
         val listState = rememberLazyListState()
         LazyColumn(
             state = listState,
             modifier = Modifier
-                .weight(1f)  // ocupa o espaço e ativa rolagem
+                .weight(1f)
                 .fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(14.dp),
             contentPadding = PaddingValues(bottom = 6.dp)
         ) {
             items(items = grupo.adicionais, key = { it.codigo }) { opc ->
-                val checked = selecionadas.any { it.codigo == opc.codigo }
                 val nome = opc.nome.ifBlank { "Opção" }
                 val preco = opc.preco
                 val precoTxt = if (preco > 0.0) "  (+ ${formatMoneyUi(preco)})" else ""
+                val limiteOpc = (opc.limite_adicao ?: 1).coerceAtLeast(1)
+                val atual = countOf(opc)
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (max <= 1) {
-                        RadioButton(
-                            selected = checked,
-                            onClick = { onSelect(opc) },
-                            colors = RadioButtonDefaults.colors(selectedColor = Orange)
-                        )
-                    } else {
+                    if (limiteOpc <= 1) {
+                        // 0/1 → Checkbox
                         Checkbox(
-                            checked = checked,
-                            onCheckedChange = { onSelect(opc) },
+                            checked = atual > 0,
+                            onCheckedChange = { checked ->
+                                onChange(opc, if (checked) 1 else 0)
+                            },
                             colors = CheckboxDefaults.colors(checkedColor = Orange)
                         )
+                    } else {
+                        // >1 → Stepper com +/-
+                        Surface(
+                            shape = CircleShape,
+                            color = Color(0xFFE9ECF2),
+                            border = BorderStroke(1.dp, Color(0xFFD6DADF))
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.height(32.dp)) {
+                                IconButton(
+                                    onClick = { if (atual > 0) onChange(opc, atual - 1) },
+                                    modifier = Modifier.size(32.dp),
+                                    enabled = atual > 0
+                                ) { Icon(Icons.Filled.Remove, contentDescription = null, tint = Color(0xFF111111)) }
+                                Text("$atual", modifier = Modifier.widthIn(min = 24.dp))
+                                IconButton(
+                                    onClick = { if (podeAdicionar(opc)) onChange(opc, atual + 1) },
+                                    modifier = Modifier.size(32.dp),
+                                    enabled = podeAdicionar(opc)
+                                ) { Icon(Icons.Filled.Add, contentDescription = null, tint = Color(0xFF111111)) }
+                            }
+                        }
+                        Spacer(Modifier.width(8.dp))
                     }
                     Spacer(Modifier.width(8.dp))
                     Text(nome + precoTxt)

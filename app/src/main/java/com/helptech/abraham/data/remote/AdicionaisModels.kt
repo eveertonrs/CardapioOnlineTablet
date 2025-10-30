@@ -2,6 +2,8 @@ package com.helptech.abraham.data.remote
 
 import com.google.gson.annotations.SerializedName
 
+
+
 /**
  * Wrappers para o retorno de produto/consultar?com_adicionais=S
  * Mantém compatibilidade sem redeclarar DTOs já existentes.

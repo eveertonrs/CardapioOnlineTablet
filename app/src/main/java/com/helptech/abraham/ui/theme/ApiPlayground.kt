@@ -51,6 +51,9 @@ import androidx.compose.material.icons.filled.Remove
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.unit.dp
+
 
 
 
@@ -746,7 +749,7 @@ fun ApiPlayground() {
 private fun MyBillDialog(root: JsonObject, onDismiss: () -> Unit) {
     val Panel         = Color(0xFFF7F8FA)
     val Card          = Color.White
-    val CardAlt       = Color(0xFFF1F3F6)   // <— usar este, não CardAltBg
+    val CardAlt       = Color(0xFFF1F3F6)
     val TextPrimary   = Color(0xFF111827)
     val TextSecondary = Color(0xFF6B7280)
     val LightDivider  = Color(0xFFE5E7EB)
@@ -767,151 +770,168 @@ private fun MyBillDialog(root: JsonObject, onDismiss: () -> Unit) {
 
     val itens = root.get("Itens").asJsonArrayOrNull()
 
-    AlertDialog(
+    // FULL SCREEN
+    androidx.compose.ui.window.Dialog(
         onDismissRequest = onDismiss,
-        confirmButton = { TextButton(onClick = onDismiss) { Text("OK") } },
-        title = { Text("Minha conta", color = TextPrimary, fontWeight = FontWeight.Bold) },
-        text = {
+        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            modifier = Modifier.fillMaxSize(),
+            color = Panel,
+            shape = RoundedCornerShape(0.dp) // era .none
+        ) {
             Column(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 0.dp, max = 520.dp) // corpo do diálogo
+                    .fillMaxSize()
+                    .padding(16.dp)
             ) {
-                // Cabeçalho (conta + cliente)
-                Surface(
-                    color = Card,
-                    shape = MaterialTheme.shapes.large,
-                    border = BorderStroke(1.dp, LightDivider),
-                    modifier = Modifier.fillMaxWidth()
+                // Top bar
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column(Modifier.padding(14.dp)) {
-                        if (!conta.isNullOrBlank()) {
-                            Text(conta, color = TextPrimary, fontWeight = FontWeight.Bold)
-                        }
-                        val linha2 = listOfNotNull(nome, doc, tel).joinToString(" · ")
-                        if (linha2.isNotBlank()) {
-                            Spacer(Modifier.height(4.dp))
-                            Text(linha2, color = TextSecondary, style = MaterialTheme.typography.bodySmall)
-                        }
-                    }
+                    Text("Minha conta", color = TextPrimary, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    TextButton(onClick = onDismiss) { Text("OK") }
                 }
 
-                Spacer(Modifier.height(12.dp))
+                Spacer(Modifier.height(8.dp))
 
-                // Resumo
-                Surface(
-                    color = Card,
-                    shape = MaterialTheme.shapes.large,
-                    border = BorderStroke(1.dp, LightDivider),
-                    modifier = Modifier.fillMaxWidth()
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
                 ) {
-                    Column(Modifier.padding(14.dp)) {
-                        Text("Resumo", color = TextPrimary, fontWeight = FontWeight.SemiBold)
-                        Spacer(Modifier.height(8.dp))
-
-                        @Composable
-                        fun Line(label: String, value: String, strong: Boolean = false, muted: Boolean = false) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    label,
-                                    color = if (muted) TextSecondary.copy(alpha = 0.6f) else TextSecondary,
-                                    style = MaterialTheme.typography.bodyMedium
-                                )
-                                Text(
-                                    value,
-                                    color = if (strong) Orange else TextPrimary,
-                                    fontWeight = if (strong) FontWeight.ExtraBold else FontWeight.SemiBold
-                                )
+                    // Cabeçalho (conta + cliente)
+                    Surface(
+                        color = Card,
+                        shape = MaterialTheme.shapes.large,
+                        border = BorderStroke(1.dp, LightDivider),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(Modifier.padding(14.dp)) {
+                            if (!conta.isNullOrBlank()) {
+                                Text(conta, color = TextPrimary, fontWeight = FontWeight.Bold)
+                            }
+                            val linha2 = listOfNotNull(nome, doc, tel).joinToString(" · ")
+                            if (linha2.isNotBlank()) {
+                                Spacer(Modifier.height(4.dp))
+                                Text(linha2, color = TextSecondary, style = MaterialTheme.typography.bodySmall)
                             }
                         }
-
-                        taxa?.let {
-                            Line(
-                                "Taxa de serviço" + if (taxaRemovida) " (removida)" else "",
-                                formatMoneyLocal(it),
-                                muted = taxaRemovida
-                            )
-                        }
-                        descontos?.takeIf { it != 0.0 }?.let { Line("Descontos", "- ${formatMoneyLocal(it)}") }
-                        brindes?.takeIf { it != 0.0 }?.let { Line("Brindes", "- ${formatMoneyLocal(it)}") }
-                        consMin?.takeIf { it != 0.0 }?.let { Line("Consumação mínima", formatMoneyLocal(it)) }
-
-                        Divider(Modifier.padding(vertical = 8.dp), color = LightDivider)
-                        Line("Total", formatMoneyLocal(total), strong = true)
                     }
-                }
 
-                // Itens (lista rolável)
-                if (itens != null && itens.size() > 0) {
                     Spacer(Modifier.height(12.dp))
-                    Text("Itens", color = TextPrimary, fontWeight = FontWeight.SemiBold)
-                    Spacer(Modifier.height(6.dp))
-                    LazyColumn(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(max = 300.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        items((0 until itens.size()).toList()) { idx ->
-                            val el = itens.get(idx).asJsonObjectOrNull()
-                            val prod = el?.get("Produto").asStringOrNull() ?: "Item"
-                            val desc = el?.get("Descricao").asStringOrNull()
-                            val qtde = el?.get("Quantidade").asDoubleOrNull()?.toInt() ?: 0
-                            val totalItem = el?.get("ValorTotal").asDoubleOrNull()
-                            val rowBg = if (idx % 2 == 0) Card else CardAlt   // <— corrigido
 
-                            Surface(
-                                color = rowBg,
-                                shape = MaterialTheme.shapes.medium,
-                                border = BorderStroke(1.dp, LightDivider),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Column(Modifier.padding(12.dp)) {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Text(prod, color = TextPrimary, fontWeight = FontWeight.SemiBold)
-                                        Text(totalItem?.let { formatMoneyLocal(it) } ?: "—",
-                                            color = Orange, fontWeight = FontWeight.Bold)
-                                    }
-                                    desc?.takeIf { it.isNotBlank() }?.let {
-                                        Spacer(Modifier.height(2.dp))
-                                        Text(it, color = TextSecondary, style = MaterialTheme.typography.bodySmall)
-                                    }
-                                    Spacer(Modifier.height(6.dp))
-                                    Surface(
-                                        shape = CircleShape,
-                                        color = Color(0x143B82F6),
-                                        border = BorderStroke(1.dp, Color(0x263B82F6))
-                                    ) {
-                                        Text(
-                                            "Qtd: $qtde",
-                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 2.dp),
-                                            color = Color(0xFF1E40AF),
-                                            style = MaterialTheme.typography.bodySmall,
-                                            fontWeight = FontWeight.Medium
-                                        )
+                    // Resumo
+                    Surface(
+                        color = Card,
+                        shape = MaterialTheme.shapes.large,
+                        border = BorderStroke(1.dp, LightDivider),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(Modifier.padding(14.dp)) {
+                            Text("Resumo", color = TextPrimary, fontWeight = FontWeight.SemiBold)
+                            Spacer(Modifier.height(8.dp))
+
+                            @Composable
+                            fun Line(label: String, value: String, strong: Boolean = false, muted: Boolean = false) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        label,
+                                        color = if (muted) TextSecondary.copy(alpha = 0.6f) else TextSecondary,
+                                        style = MaterialTheme.typography.bodyMedium
+                                    )
+                                    Text(
+                                        value,
+                                        color = if (strong) Orange else TextPrimary,
+                                        fontWeight = if (strong) FontWeight.ExtraBold else FontWeight.SemiBold
+                                    )
+                                }
+                            }
+
+                            taxa?.let {
+                                Line("Taxa de serviço" + if (taxaRemovida) " (removida)" else "", formatMoneyLocal(it), muted = taxaRemovida)
+                            }
+                            descontos?.takeIf { it != 0.0 }?.let { Line("Descontos", "- ${formatMoneyLocal(it)}") }
+                            brindes?.takeIf { it != 0.0 }?.let { Line("Brindes", "- ${formatMoneyLocal(it)}") }
+                            consMin?.takeIf { it != 0.0 }?.let { Line("Consumação mínima", formatMoneyLocal(it)) }
+
+                            Divider(Modifier.padding(vertical = 8.dp), color = LightDivider)
+                            Line("Total", formatMoneyLocal(total), strong = true)
+                        }
+                    }
+
+                    // Itens
+                    if (itens != null && itens.size() > 0) {
+                        Spacer(Modifier.height(12.dp))
+                        Text("Itens", color = TextPrimary, fontWeight = FontWeight.SemiBold)
+                        Spacer(Modifier.height(6.dp))
+                        LazyColumn(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            items((0 until itens.size()).toList()) { idx ->
+                                val el = itens.get(idx).asJsonObjectOrNull()
+                                val prod = el?.get("Produto").asStringOrNull() ?: "Item"
+                                val desc = el?.get("Descricao").asStringOrNull()
+                                val qtde = el?.get("Quantidade").asDoubleOrNull()?.toInt() ?: 0
+                                val totalItem = el?.get("ValorTotal").asDoubleOrNull()
+                                val rowBg = if (idx % 2 == 0) Card else CardAlt
+
+                                Surface(
+                                    color = rowBg,
+                                    shape = MaterialTheme.shapes.medium,
+                                    border = BorderStroke(1.dp, LightDivider),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Column(Modifier.padding(12.dp)) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(prod, color = TextPrimary, fontWeight = FontWeight.SemiBold)
+                                            Text(totalItem?.let { formatMoneyLocal(it) } ?: "—",
+                                                color = Orange, fontWeight = FontWeight.Bold)
+                                        }
+                                        desc?.takeIf { it.isNotBlank() }?.let {
+                                            Spacer(Modifier.height(2.dp))
+                                            Text(it, color = TextSecondary, style = MaterialTheme.typography.bodySmall)
+                                        }
+                                        Spacer(Modifier.height(6.dp))
+                                        Surface(
+                                            shape = CircleShape,
+                                            color = Color(0x143B82F6),
+                                            border = BorderStroke(1.dp, Color(0x263B82F6))
+                                        ) {
+                                            Text(
+                                                "Qtd: $qtde",
+                                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 2.dp),
+                                                color = Color(0xFF1E40AF),
+                                                style = MaterialTheme.typography.bodySmall,
+                                                fontWeight = FontWeight.Medium
+                                            )
+                                        }
                                     }
                                 }
                             }
                         }
+                    } else {
+                        Spacer(Modifier.height(10.dp))
+                        Text("Nenhum item encontrado.", color = TextSecondary)
                     }
-                } else {
-                    Spacer(Modifier.height(10.dp))
-                    Text("Nenhum item encontrado.", color = TextSecondary)
                 }
             }
-        },
-        containerColor = Panel
-    )
+        }
+    }
 }
-
 
 /* ----------- Loading sheet ----------- */
 @OptIn(ExperimentalMaterial3Api::class)

@@ -74,6 +74,7 @@ data class ProdutoDto(
 /* -------------------------------------------------------------------------- */
 
 /** Item de adicional (opção dentro de um grupo). */
+/** Item de adicional (opção dentro de um grupo). */
 data class AdicionalItemDto(
     val codigo: Int,
     val categoria_codigo: Int?,
@@ -88,6 +89,10 @@ data class AdicionalItemDto(
     @SerializedName("valor_ad")
     @JsonAdapter(DoubleOrNullAdapter::class)
     val valorAd: Double? = null,
+
+    // <<< NOVO: respeita a regra 0/1 = checkbox; >1 = stepper (+/-) >>>
+    @SerializedName("limite_adicao")
+    val limite_adicao: Int? = null,
 
     val ativo: String?,
     val categoria_nome: String? = null
