@@ -780,9 +780,11 @@ fun ApiPlayground() {
                         onBack = { screen = Screen.MENU },
                         onConfirm = {
                             if (itens.isEmpty()) return@CartPage
+
                             scope.launch {
                                 submitting = true
 
+                                // Monta itens da requisição normalmente
                                 val itensReq: List<ItemPedidoReq> = itens.map { ci ->
                                     ItemPedidoReq(
                                         codigoProduto = ci.produto.codigo,
@@ -801,37 +803,49 @@ fun ApiPlayground() {
                                     )
                                 }
 
-                                val result = enviarPedidoRemote(
-                                    mesaLabel = mesaLabel,
-                                    itens = itensReq,
-                                    tipoEntregaCodigo = "2",
-                                    formaPgtoCodigo = "1",
-                                    obsPedido = cartObs
-                                )
-
-                                result.onSuccess { el: JsonElement? ->
-                                    val pedidoId = when {
-                                        el == null -> null
-                                        el.isJsonPrimitive -> el.asString
-                                        el.isJsonObject && el.asJsonObject.has("codigo") ->
-                                            el.asJsonObject.get("codigo").asString
-                                        else -> null
-                                    }
-                                    statusMsg =
-                                        if (pedidoId.isNullOrBlank())
-                                            "Pedido enviado com sucesso!"
-                                        else
-                                            "Pedido enviado com sucesso! Nº: $pedidoId"
-
-                                    autoCloseSeconds = null
-                                    cart.clear()
-                                    cartObs = ""
-                                    screen = Screen.MENU
-                                }.onFailure { e: Throwable ->
-                                    statusMsg =
-                                        "Falha ao enviar pedido: ${e.message ?: "erro desconhecido"}"
-                                    autoCloseSeconds = null
+                                // 🔹 Protege contra qualquer exceção (ex: sem internet)
+                                val result: Result<JsonElement?> = try {
+                                    enviarPedidoRemote(
+                                        mesaLabel = mesaLabel,
+                                        itens = itensReq,
+                                        tipoEntregaCodigo = "2",
+                                        formaPgtoCodigo = "1",
+                                        obsPedido = cartObs
+                                    )
+                                } catch (e: Exception) {
+                                    Result.failure(e)
                                 }
+
+                                result
+                                    .onSuccess { el: JsonElement? ->
+                                        val pedidoId = when {
+                                            el == null -> null
+                                            el.isJsonPrimitive -> el.asString
+                                            el.isJsonObject && el.asJsonObject.has("codigo") ->
+                                                el.asJsonObject.get("codigo").asString
+                                            else -> null
+                                        }
+
+                                        statusMsg =
+                                            if (pedidoId.isNullOrBlank())
+                                                "Pedido enviado com sucesso!"
+                                            else
+                                                "Pedido enviado com sucesso! Nº: $pedidoId"
+
+                                        autoCloseSeconds = null
+                                        cart.clear()
+                                        cartObs = ""
+                                        screen = Screen.MENU
+                                    }
+                                    .onFailure { e: Throwable ->
+                                        // 🔹 Mensagem amigável quando estiver sem rede / erro de comunicação
+                                        statusMsg =
+                                            "Não foi possível enviar o pedido.\n" +
+                                                    "Verifique se o tablet está conectado à rede.\n\n" +
+                                                    "Detalhe técnico: ${e.message ?: "erro de comunicação com o servidor."}"
+
+                                        autoCloseSeconds = null
+                                    }
 
                                 submitting = false
                             }
