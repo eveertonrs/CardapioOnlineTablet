@@ -29,5 +29,6 @@ object AuthBootstrapper {
         AppSettings.saveEmpresa(context, Env.RUNTIME_EMPRESA)
         AppSettings.saveUsuario(context, Env.RUNTIME_USUARIO)
         AppSettings.saveApiToken(context, Env.RUNTIME_TOKEN)
+        AppSettings.saveDeviceSerial(context, serial)
     }
 }

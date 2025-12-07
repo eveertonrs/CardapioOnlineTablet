@@ -5,6 +5,7 @@ import com.google.gson.GsonBuilder
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import com.helptech.abraham.Env
+import com.helptech.abraham.BuildConfig
 import com.helptech.abraham.network.Http
 import com.helptech.abraham.network.TolonApi
 import com.helptech.abraham.data.remote.ApiEnvelope
@@ -17,7 +18,13 @@ import retrofit2.converter.gson.GsonConverterFactory
 import retrofit2.http.Body
 import retrofit2.http.Header
 import retrofit2.http.POST
+import java.security.SecureRandom
+import java.security.cert.X509Certificate
 import java.util.concurrent.TimeUnit
+import javax.net.ssl.HostnameVerifier
+import javax.net.ssl.SSLContext
+import javax.net.ssl.TrustManager
+import javax.net.ssl.X509TrustManager
 
 data class AuthDeviceResp(
     val sucesso: Boolean = false,
@@ -57,7 +64,8 @@ private interface TolonRawApi {
 
 object IntegracaoService {
 
-    // ---------- Cliente dedicado ao authdevice ----------
+    // ---------- GSON / logging ----------
+
     private val gson = GsonBuilder()
         .setLenient()
         .serializeNulls()
@@ -68,19 +76,73 @@ object IntegracaoService {
         level = HttpLoggingInterceptor.Level.BODY
     }
 
-    private val authClient = OkHttpClient.Builder()
-        .addInterceptor(Interceptor { chain ->
-            val req = chain.request().newBuilder()
-                .addHeader("Accept", "application/json")
-                .addHeader("Content-Type", "application/json")
-                .build()
-            chain.proceed(req)
-        })
-        .addInterceptor(logging)
-        .connectTimeout(20, TimeUnit.SECONDS)
-        .readTimeout(20, TimeUnit.SECONDS)
-        .retryOnConnectionFailure(true)
-        .build()
+    /**
+     * Cria o OkHttpClient para o authdevice.
+     * Em DEBUG, usamos um client “unsafe” para contornar problemas de certificado
+     * no painel; em RELEASE, usamos o client padrão (seguro).
+     */
+    private fun buildAuthClient(): OkHttpClient {
+        val baseBuilder = OkHttpClient.Builder()
+            .addInterceptor(Interceptor { chain ->
+                val req = chain.request().newBuilder()
+                    .addHeader("Accept", "application/json")
+                    .addHeader("Content-Type", "application/json")
+                    .build()
+                chain.proceed(req)
+            })
+            .addInterceptor(logging)
+            .connectTimeout(20, TimeUnit.SECONDS)
+            .readTimeout(20, TimeUnit.SECONDS)
+            .retryOnConnectionFailure(true)
+
+        return if (BuildConfig.DEBUG) {
+            // ⚠️ SOMENTE PARA DESENVOLVIMENTO
+            createUnsafeClient(baseBuilder)
+        } else {
+            baseBuilder.build()
+        }
+    }
+
+    /**
+     * Ajusta o builder para aceitar qualquer certificado / hostname.
+     * NÃO usar em produção – apenas para ambiente de desenvolvimento.
+     */
+    private fun createUnsafeClient(builder: OkHttpClient.Builder): OkHttpClient {
+        val trustAllCerts = arrayOf<TrustManager>(
+            object : X509TrustManager {
+                override fun checkClientTrusted(
+                    chain: Array<X509Certificate>,
+                    authType: String
+                ) {
+                    // no-op
+                }
+
+                override fun checkServerTrusted(
+                    chain: Array<X509Certificate>,
+                    authType: String
+                ) {
+                    // no-op
+                }
+
+                override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
+            }
+        )
+
+        val sslContext = SSLContext.getInstance("SSL").apply {
+            init(null, trustAllCerts, SecureRandom())
+        }
+
+        val sslSocketFactory = sslContext.socketFactory
+        val trustManager = trustAllCerts[0] as X509TrustManager
+
+        return builder
+            .sslSocketFactory(sslSocketFactory, trustManager)
+            .hostnameVerifier(HostnameVerifier { _, _ -> true })
+            .build()
+    }
+
+    // Client efetivo usado no Retrofit do auth
+    private val authClient: OkHttpClient = buildAuthClient()
 
     // base dinâmica para auth: usa RUNTIME_BASE_URL se setada; senão base do build
     private fun authBaseUrl(): String {
@@ -103,10 +165,12 @@ object IntegracaoService {
         nome: String
     ): AuthDeviceResp {
         Log.i("IntegracaoService", "authdevice SN=$serialNumber, nome=$nome")
+
         val body = mapOf(
             "serialnumber" to serialNumber,
             "Nome" to nome
         )
+
         return authApi.authDevice(
             vendorToken = Env.AUTHDEVICE_TOKEN,
             body = body
@@ -114,6 +178,7 @@ object IntegracaoService {
     }
 
     // ---------- Demais chamadas ----------
+
     private val api: TolonApi by lazy { Http.retrofit.create(TolonApi::class.java) }
 
     // Envelope padrão (mantido para quem já usa)
@@ -130,6 +195,7 @@ object IntegracaoService {
     }
 
     // ---------- Variante RAW que devolve o JSON completo ----------
+
     private val rawApi: TolonRawApi by lazy { Http.retrofit.create(TolonRawApi::class.java) }
 
     /**
@@ -144,7 +210,11 @@ object IntegracaoService {
             .string()
 
         // Remove BOM, se houver, e parseia
-        val clean = if (respText.isNotEmpty() && respText[0] == '\uFEFF') respText.substring(1) else respText
+        val clean = if (respText.isNotEmpty() && respText[0] == '\uFEFF') {
+            respText.substring(1)
+        } else {
+            respText
+        }
         JsonParser.parseString(clean).asJsonObject
     }
 }

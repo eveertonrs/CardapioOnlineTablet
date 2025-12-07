@@ -25,15 +25,39 @@ fun SetupScreen(
     var empresa by remember { mutableStateOf(TextFieldValue("")) }
     var nomeDisp by remember { mutableStateOf(TextFieldValue("POS")) }
 
-    // Usa serial fixo no dev; se null, pega o ANDROID_ID do dispositivo
-    val serialParaAuth = remember { Env.DEV_FORCE_SERIAL ?: getAndroidId(ctx) }
+    // Serial mostrado na tela e usado na API
+    var serial by remember { mutableStateOf("") }
+
+    // Carrega o serial ao abrir a tela
+    LaunchedEffect(Unit) {
+        val forced = Env.DEV_FORCE_SERIAL
+        serial = if (!forced.isNullOrBlank()) {
+            forced
+        } else {
+            getAndroidId(ctx)
+        }
+    }
 
     var loading by remember { mutableStateOf(false) }
     var msg by remember { mutableStateOf<String?>(null) }
 
     fun autenticar() {
+        // Garante que sempre temos um serial válido
+        val serialParaAuth = if (serial.isNotBlank()) {
+            serial
+        } else {
+            val forced = Env.DEV_FORCE_SERIAL
+            if (!forced.isNullOrBlank()) forced else getAndroidId(ctx)
+        }
+
+        if (serialParaAuth.isBlank()) {
+            msg = "Não foi possível obter o serial do dispositivo."
+            return
+        }
+
         loading = true
         msg = null
+
         scope.launch {
             try {
                 val resp = IntegracaoService.authDevice(
@@ -47,19 +71,22 @@ fun SetupScreen(
                     return@launch
                 }
 
-                // Empresa final: prioriza servidor; senão o digitado; senão default
-                val empresaFinal = (resp.empresa ?: empresa.text.ifBlank { Env.DEFAULT_EMPRESA }).lowercase()
+                // Empresa final: prioriza o que veio da API > digitado > default
+                val empresaFinal = (resp.empresa
+                    ?: empresa.text.ifBlank { Env.DEFAULT_EMPRESA }
+                        ).lowercase()
 
                 // Persiste no DataStore
                 AppSettings.saveEmpresa(ctx, empresaFinal)
                 resp.token?.let { AppSettings.saveApiToken(ctx, it) }
+                AppSettings.saveDeviceSerial(ctx, serialParaAuth)
 
-                // Preenche o ambiente em runtime
+                // Preenche variáveis de runtime
                 Env.RUNTIME_EMPRESA = empresaFinal
                 Env.RUNTIME_USUARIO = resp.usuario ?: ""
                 Env.RUNTIME_TOKEN   = resp.token ?: ""
 
-                // Papel padrão: BALCÃO
+                // Papel padrão
                 AppSettings.setRole(ctx, DeviceRole.BALCAO)
 
                 onConfigured()
@@ -72,7 +99,10 @@ fun SetupScreen(
     }
 
     Surface(Modifier.fillMaxSize()) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.Center
+        ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -80,7 +110,10 @@ fun SetupScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Text("Configurar dispositivo", style = MaterialTheme.typography.titleLarge)
+                Text(
+                    "Configurar dispositivo",
+                    style = MaterialTheme.typography.titleLarge
+                )
 
                 OutlinedTextField(
                     value = empresa,
@@ -96,12 +129,16 @@ fun SetupScreen(
                     singleLine = true
                 )
 
+                // Campo somente leitura com o serial
                 OutlinedTextField(
-                    value = TextFieldValue(serialParaAuth),
-                    onValueChange = {},
+                    value = TextFieldValue(serial),
+                    onValueChange = { },
                     enabled = false,
                     label = { Text("Serial (ANDROID_ID)") },
-                    singleLine = true
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        disabledTextColor = MaterialTheme.colorScheme.onSurface
+                    )
                 )
 
                 if (msg != null) {

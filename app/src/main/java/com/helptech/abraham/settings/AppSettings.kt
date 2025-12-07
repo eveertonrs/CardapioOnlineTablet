@@ -23,6 +23,7 @@ object AppSettings {
     private val KEY_API_TOKEN  = stringPreferencesKey("api_token")
     private val KEY_USUARIO    = stringPreferencesKey("usuario")
     // >>> NOVO: base dinâmica (online x local)
+    private val KEY_DEVICE_SERIAL = stringPreferencesKey("device_serial")
     private val KEY_BASE_URL   = stringPreferencesKey("base_url")
 
     /* ====== gravação ====== */
@@ -55,6 +56,10 @@ object AppSettings {
         ctx.dataStore.edit { it[KEY_USUARIO] = usuario }
     }
 
+    // >>> NOVO: gravar serial do dispositivo
+    suspend fun saveDeviceSerial(ctx: Context, serial: String) {
+        ctx.dataStore.edit { it[KEY_DEVICE_SERIAL] = serial }
+    }
     // >>> NOVO: gravar base URL (ex.: https://painel.tolon.com.br/ ou http://192.168.0.10/)
     suspend fun saveBaseUrl(ctx: Context, url: String) {
         ctx.dataStore.edit { it[KEY_BASE_URL] = url.trim() }
@@ -80,6 +85,9 @@ object AppSettings {
     fun observeUsuario(ctx: Context): Flow<String?> =
         ctx.dataStore.data.map { it[KEY_USUARIO] }.distinctUntilChanged()
 
+    fun observeDeviceSerial(ctx: Context): Flow<String?> =
+        ctx.dataStore.data.map { it[KEY_DEVICE_SERIAL] }.distinctUntilChanged()
+
     // >>> NOVO: observar base URL atual
     fun observeBaseUrl(ctx: Context): Flow<String?> =
         ctx.dataStore.data.map { it[KEY_BASE_URL] }.distinctUntilChanged()
@@ -102,6 +110,8 @@ object AppSettings {
     suspend fun getUsuarioOnce(ctx: Context): String? =
         ctx.dataStore.data.first()[KEY_USUARIO]
 
+    suspend fun getDeviceSerialOnce(ctx: Context): String? =
+        ctx.dataStore.data.first()[KEY_DEVICE_SERIAL]
     // >>> NOVO: ler base URL (fallback: BuildConfig.API_BASE_URL)
     suspend fun getBaseUrlOnce(ctx: Context): String =
         ctx.dataStore.data.first()[KEY_BASE_URL] ?: BuildConfig.API_BASE_URL
@@ -127,6 +137,7 @@ object AppSettings {
             it.remove(KEY_EMPRESA)
             it.remove(KEY_API_TOKEN)
             it.remove(KEY_USUARIO)
+            it.remove(KEY_DEVICE_SERIAL)
         }
     }
 }

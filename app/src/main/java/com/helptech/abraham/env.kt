@@ -22,8 +22,8 @@ object Env {
     /**
      * Útil no emulador: force um serial específico.
      * Deixe null para usar o ANDROID_ID real.
-     */
-    val DEV_FORCE_SERIAL: String? = null
+     *ccb98bfb83cf9ddf               POSA7DCVAD987AS*/
+    val DEV_FORCE_SERIAL: String? = "ccb98bfb83cf9ddf"
 
     // === Preenchidos em runtime após o authdevice ===
     @Volatile var RUNTIME_EMPRESA: String = ""

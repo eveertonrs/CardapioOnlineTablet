@@ -18,7 +18,6 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.snapshotFlow
-import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -27,6 +26,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -37,6 +37,7 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.helptech.abraham.data.remote.GrupoAdicionalDto
 import com.helptech.abraham.data.remote.ProdutoDto
+import com.helptech.abraham.integracao.getAndroidId
 import com.helptech.abraham.network.AdicionaisRepo
 import com.helptech.abraham.network.AdicionaisService
 import com.helptech.abraham.network.buscarFotoPrincipal
@@ -72,11 +73,13 @@ fun MenuScreenHost(
     onCartClick: () -> Unit,
     onAddConfirm: (ProdutoEscolhido, ProdutoDto) -> Unit,
     onCallWaiter: (() -> Unit)? = null,
-    onMyBill:   (() -> Unit)? = null
+    onMyBill:   (() -> Unit)? = null,
+    onOpenMesaDialog: (() -> Unit)? = null
 ) {
     var produtoSel by remember { mutableStateOf<ProdutoDto?>(null) }
-    var gruposSel   by remember(produtoSel) { mutableStateOf<List<GrupoAdicionalDto>?>(null) }
+    var gruposSel by remember(produtoSel) { mutableStateOf<List<GrupoAdicionalDto>?>(null) }
 
+    // >>> Só repassa as ações para a tela principal
     RestaurantMenuColumnsScreen(
         produtos = produtos,
         onAddToCart = { p ->
@@ -87,9 +90,11 @@ fun MenuScreenHost(
         cartCount = cartCount,
         onCartClick = onCartClick,
         onCallWaiter = onCallWaiter,
-        onMyBill = onMyBill
+        onMyBill = onMyBill,
+        onOpenMesaDialog = onOpenMesaDialog
     )
 
+    // >>> Lógica de abrir o bottom sheet de detalhes continua igual
     produtoSel?.let { p ->
         LaunchedEffect(p.codigo) {
             val locais: List<GrupoAdicionalDto> = AdicionaisRepo.fromProduto(produto = p)
@@ -116,6 +121,7 @@ fun MenuScreenHost(
         }
     }
 }
+
 
 /** Tela principal (barra + rail + lista) */
 @Composable
@@ -231,11 +237,33 @@ fun RestaurantMenuColumnsScreen(
             SectionedProductList(
                 items = flatList,
                 listState = listState,
-                onAdd = { p -> onAddToCart(p) },
+                onProductClick = { p -> onAddToCart(p) },
                 modifier = Modifier.weight(1f)
             )
         }
     }
+}
+
+@Composable
+private fun DeviceInfoDialog(onDismiss: () -> Unit) {
+    val ctx = LocalContext.current
+    val serial = remember { getAndroidId(ctx) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Informações do Dispositivo") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Serial do dispositivo:")
+                Text(serial, fontWeight = FontWeight.Bold)
+            }
+        },
+        confirmButton = {
+            Button(onClick = onDismiss) {
+                Text("Fechar")
+            }
+        }
+    )
 }
 
 private fun Int.coerceAtLeastZero() = if (this < 0) 0 else this
@@ -259,15 +287,15 @@ private fun TopBarOrange(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(64.dp)
-                .padding(horizontal = 12.dp),
+                .height(72.dp) // Aumentado
+                .padding(horizontal = 16.dp), // Aumentado
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
                 text = mesaLabel,
                 color = Color.White,
                 fontWeight = FontWeight.ExtraBold,
-                fontSize = 16.sp,
+                fontSize = 20.sp, // Aumentado
                 modifier = Modifier.pointerInput(Unit) {
                     detectTapGestures(
                         onLongPress = { onOpenMesaDialog?.invoke() },
@@ -276,7 +304,7 @@ private fun TopBarOrange(
                 }
             )
 
-            Spacer(Modifier.width(10.dp))
+            Spacer(Modifier.width(16.dp)) // Aumentado
 
             SearchField(
                 value = search,
@@ -285,11 +313,11 @@ private fun TopBarOrange(
                 modifier = Modifier.weight(1f)
             )
 
-            Spacer(Modifier.width(10.dp))
+            Spacer(Modifier.width(12.dp)) // Aumentado
             TopChip("MINHA CONTA", onMyBill)
-            Spacer(Modifier.width(8.dp))
+            Spacer(Modifier.width(10.dp)) // Aumentado
             TopChip("CHAMAR GARÇOM", onCallWaiter)
-            Spacer(Modifier.width(8.dp))
+            Spacer(Modifier.width(10.dp)) // Aumentado
             TopChip("CARRINHO ($cartCount)") {
                 focus.clearFocus()
                 onCartClick()
@@ -313,16 +341,16 @@ private fun SearchField(
                 "Buscar produto…",
                 maxLines = 1,
                 color = Color(0xFF5A5A5A),
-                fontSize = 16.sp
+                fontSize = 18.sp // Aumentado
             )
         },
         singleLine = true,
         leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null, tint = Color(0xFF5A5A5A)) },
-        textStyle = TextStyle(fontSize = 18.sp, lineHeight = 24.sp),
+        textStyle = TextStyle(fontSize = 20.sp, lineHeight = 26.sp), // Aumentado
         keyboardOptions = KeyboardOptions.Default.copy(imeAction = ImeAction.Search),
         keyboardActions = KeyboardActions(onSearch = { onSearch() }),
         modifier = modifier
-            .heightIn(min = 56.dp)
+            .heightIn(min = 60.dp) // Aumentado
             .clip(MaterialTheme.shapes.medium),
         colors = TextFieldDefaults.colors(
             focusedContainerColor   = Color.White,
@@ -344,19 +372,19 @@ private fun TopChip(text: String, onClick: (() -> Unit)? = null) {
     Surface(
         color = Color(0x26FFFFFF),
         contentColor = Color.White,
-        shape = MaterialTheme.shapes.small,
+        shape = MaterialTheme.shapes.medium, // Aumentado
         modifier = Modifier
-            .height(36.dp)
-            .defaultMinSize(minWidth = 132.dp)
+            .height(48.dp) // Aumentado
+            .defaultMinSize(minWidth = 140.dp) // Aumentado
             .clickable(enabled = onClick != null) { onClick?.invoke() }
     ) {
         Box(
-            modifier = Modifier.padding(horizontal = 14.dp),
+            modifier = Modifier.padding(horizontal = 16.dp), // Aumentado
             contentAlignment = Alignment.Center
         ) {
             Text(
                 text,
-                fontSize = 14.sp,
+                fontSize = 16.sp, // Aumentado
                 fontWeight = FontWeight.SemiBold,
                 maxLines = 1
             )
@@ -474,7 +502,7 @@ private fun CategoryTile(
 private fun SectionedProductList(
     items: List<SectionItem>,
     listState: androidx.compose.foundation.lazy.LazyListState,
-    onAdd: (ProdutoDto) -> Unit,
+    onProductClick: (ProdutoDto) -> Unit,
     modifier: Modifier = Modifier
 ) {
     LazyColumn(
@@ -482,14 +510,14 @@ private fun SectionedProductList(
         modifier = modifier
             .fillMaxHeight()
             .background(MenuBg)
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(10.dp),
-        contentPadding = PaddingValues(bottom = 28.dp)
+            .padding(horizontal = 20.dp, vertical = 16.dp), // Aumentado
+        verticalArrangement = Arrangement.spacedBy(16.dp), // Aumentado
+        contentPadding = PaddingValues(bottom = 32.dp) // Aumentado
     ) {
         items(items, key = { it.hashCode() }) { item ->
             when (item) {
                 is SectionItem.Header -> SectionHeader(item.categoria)
-                is SectionItem.Product -> ProductRowCompact(item.produto) { onAdd(item.produto) }
+                is SectionItem.Product -> ProductRow(item.produto, onClick = { onProductClick(item.produto) })
             }
         }
     }
@@ -505,28 +533,35 @@ private fun SectionHeader(titulo: String) {
     ) {
         Text(
             text = titulo,
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp), // Aumentado
             color = Color.White,
-            fontWeight = FontWeight.Bold
+            fontWeight = FontWeight.Bold,
+            fontSize = 18.sp // Aumentado
         )
     }
 }
 
 @Composable
-private fun ProductRowCompact(
+private fun ProductRow(
     produto: ProdutoDto,
-    onAdd: () -> Unit
+    onClick: () -> Unit
 ) {
-    Surface(color = CardBg, shape = MaterialTheme.shapes.large, tonalElevation = 0.dp) {
+    Surface(
+        shape = MaterialTheme.shapes.large,
+        color = CardBg,
+        tonalElevation = 2.dp,
+        modifier = Modifier.clickable { onClick() } // Card inteiro clicável
+    ) {
         Row(
             Modifier
                 .fillMaxWidth()
-                .padding(10.dp),
+                .padding(16.dp), // Aumentado
             verticalAlignment = Alignment.CenterVertically
         ) {
+            // --- Imagem do Produto ---
             Box(
                 modifier = Modifier
-                    .size(140.dp)
+                    .size(160.dp) // Aumentado
                     .clip(MaterialTheme.shapes.medium)
                     .background(Color(0xFF343A40)),
                 contentAlignment = Alignment.Center
@@ -536,7 +571,8 @@ private fun ProductRowCompact(
                     url = try { buscarFotoPrincipal(produto.codigo) } catch (_: Exception) { null }
                 }
                 val f = produto.foto
-                val isUrl = !f.isNullOrBlank() && (f.startsWith("http", true) || f.startsWith("https", true))
+                val isUrl = !f.isNullOrBlank() &&
+                        (f.startsWith("http", true) || f.startsWith("https|https", true))
 
                 when {
                     !url.isNullOrBlank() -> AsyncImage(
@@ -560,41 +596,67 @@ private fun ProductRowCompact(
                 }
             }
 
-            Spacer(Modifier.width(12.dp))
+            Spacer(Modifier.width(16.dp)) // Aumentado
 
+            // --- Detalhes do Produto ---
             Column(Modifier.weight(1f)) {
                 Text(
                     produto.nome,
                     color = Color.White,
                     fontWeight = FontWeight.Bold,
-                    maxLines = 1,
+                    fontSize = 22.sp, // Aumentado
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis
                 )
                 if (!produto.descricao.isNullOrBlank()) {
-                    Spacer(Modifier.height(4.dp))
+                    Spacer(Modifier.height(6.dp))
                     Text(
                         produto.descricao!!,
                         color = Muted,
-                        maxLines = 2,
+                        maxLines = 3,
                         overflow = TextOverflow.Ellipsis,
-                        fontSize = 12.sp
+                        fontSize = 14.sp
                     )
                 }
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    text = formatMoneyUi(produto.valor),
-                    color = Orange, fontWeight = FontWeight.Black, fontSize = 18.sp
-                )
-            }
 
-            Button(
-                onClick = onAdd,
-                colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Color.White),
-                shape = MaterialTheme.shapes.large
-            ) { Text("ADICIONAR AO CARRINHO") }
+                Spacer(Modifier.height(12.dp))
+
+                // Preço + botão na MESMA LINHA
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = formatMoneyUi(produto.valor),
+                        color = Orange,
+                        fontWeight = FontWeight.Black,
+                        fontSize = 24.sp
+                    )
+
+                    Button(
+                        onClick = { onClick() }, // abre o detalhe igual clicar no card
+                        modifier = Modifier
+                            .height(40.dp)
+                            .defaultMinSize(minWidth = 140.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Orange,
+                            contentColor = Color.White
+                        ),
+                        shape = MaterialTheme.shapes.medium
+                    ) {
+                        Text(
+                            "ADICIONAR",
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 14.sp
+                        )
+                    }
+                }
+            }
         }
     }
 }
+
 
 /* ---------- Utils ---------- */
 
