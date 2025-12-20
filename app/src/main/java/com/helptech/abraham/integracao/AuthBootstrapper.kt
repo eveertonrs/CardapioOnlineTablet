@@ -4,6 +4,7 @@ import android.content.Context
 import android.provider.Settings
 import com.helptech.abraham.Env
 import com.helptech.abraham.settings.AppSettings
+import com.helptech.abraham.settings.DeviceRole
 
 object AuthBootstrapper {
     suspend fun ensureAuth(context: Context, serialOverride: String? = Env.DEV_FORCE_SERIAL) {
@@ -24,13 +25,18 @@ object AuthBootstrapper {
             error("Authdevice retornou dados incompletos (empresa/token).")
         }
 
+        // Atualiza o runtime
         Env.RUNTIME_EMPRESA = empresa
         Env.RUNTIME_USUARIO = usuario
         Env.RUNTIME_TOKEN   = token
 
+        // Persiste os dados de autenticação E a configuração
         AppSettings.saveEmpresa(context, empresa)
         AppSettings.saveUsuario(context, usuario)
         AppSettings.saveApiToken(context, token)
         AppSettings.saveDeviceSerial(context, serial)
+
+        // Define uma role padrão para marcar o app como configurado
+        AppSettings.setRole(context, DeviceRole.BALCAO)
     }
 }

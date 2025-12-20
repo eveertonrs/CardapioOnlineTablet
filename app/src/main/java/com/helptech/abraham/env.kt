@@ -24,7 +24,7 @@ object Env {
      * ccb98bfb83cf9ddf (Yinki)
      * eveerton (MIT)
      */
-    val DEV_FORCE_SERIAL: String? = "ccb98bfb83cf9ddf"
+    val DEV_FORCE_SERIAL: String? = ""
 
     // === Preenchidos em runtime após o sucesso do authdevice ===
     @Volatile var RUNTIME_EMPRESA: String = ""
