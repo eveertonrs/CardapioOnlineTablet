@@ -76,8 +76,10 @@ object AppSettings {
     fun observeTable(ctx: Context): Flow<Int> =
         ctx.dataStore.data.map { it[KEY_TABLE] ?: 1 }.distinctUntilChanged()
 
-    fun observeEmpresa(ctx: Context): Flow<String?> =
-        ctx.dataStore.data.map { it[KEY_EMPRESA] }.distinctUntilChanged()
+    fun observeEmpresa(ctx: Context): Flow<String> =
+        ctx.dataStore.data
+            .map { it[KEY_EMPRESA] ?: "" }
+            .distinctUntilChanged()
 
     fun observeApiToken(ctx: Context): Flow<String?> =
         ctx.dataStore.data.map { it[KEY_API_TOKEN] }.distinctUntilChanged()

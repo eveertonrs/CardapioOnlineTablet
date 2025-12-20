@@ -12,6 +12,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 
+
 /**
  * Chamada tolerante para “chamar garçom”.
  * Tenta pares (módulo, função) comuns nos painéis Tolon/Akitem.
@@ -118,33 +119,45 @@ private val rawHttpClient by lazy { OkHttpClient() }
  * Consulta de consumo que captura o **JSON bruto completo** da API Tolon,
  * sem passar pelo "envelope" que pode reduzir a resposta a "sucesso":"true".
  */
-suspend fun consultarConsumoJson(contaOuMesa: String): Result<JsonObject> = withContext(Dispatchers.IO) {
-    runCatching {
-        // Base dinâmica: usa Env.RUNTIME_BASE_URL se houver; senão, a base do build (LegacyConfig.BASE_URL)
-        val base = (Env.RUNTIME_BASE_URL ?: LegacyConfig.BASE_URL).let { if (it.endsWith("/")) it else "$it/" }
-        val url  = base + "integracao.php?empresa=${LegacyConfig.EMPRESA}"
-        // No ambiente do cliente o cURL usa só "conta"
-        val payload = """{"conta":"$contaOuMesa"}""".toRequestBody("application/json".toMediaType())
+/**suspend fun consultarConsumoJson(contaOuMesa: String): Result<JsonObject> =
+    withContext(Dispatchers.IO) {
+        runCatching {
 
-        val req = Request.Builder()
-            .url(url)
-            .post(payload)
-            .addHeader("modulo", "empresa")
-            .addHeader("funcao", "consultarConsumo")
-            .addHeader("Accept", "application/json")
-            .addHeader("Content-Type", "application/json")
-            .addHeader("Cache-Control", "no-cache")
-            // credenciais do runtime (interceptors fariam isso também, mas aqui é chamada "crua")
-            .addHeader("token",   LegacyConfig.TOKEN)
-            .addHeader("usuario", LegacyConfig.USUARIO)
-            .addHeader("empresa", LegacyConfig.EMPRESA)
-            .build()
+            val base = (Env.RUNTIME_BASE_URL ?: LegacyConfig.BASE_URL)
+                .let { if (it.endsWith("/")) it else "$it/" }
 
-        rawHttpClient.newCall(req).execute().use { resp ->
-            if (!resp.isSuccessful) error("HTTP ${resp.code}")
-            val raw = resp.body?.string() ?: error("Corpo vazio")
-            val clean = raw.removePrefix("\uFEFF").trim() // remove BOM
-            JsonParser.parseString(clean).asJsonObject
+            val emp = Env.RUNTIME_EMPRESA
+            val usr = Env.RUNTIME_USUARIO
+            val tok = Env.RUNTIME_TOKEN
+
+            if (emp.isBlank() || tok.isBlank()) {
+                error("Auth não carregado (empresa/token vazios).")
+            }
+
+            val url = base + "integracao.php?empresa=$emp"
+
+            val payload = """{"conta":"$contaOuMesa"}"""
+                .toRequestBody("application/json".toMediaType())
+
+            val req = Request.Builder()
+                .url(url)
+                .post(payload)
+                .addHeader("modulo", "empresa")
+                .addHeader("funcao", "consultarConsumo")
+                .addHeader("Accept", "application/json")
+                .addHeader("Content-Type", "application/json")
+                .addHeader("Cache-Control", "no-cache")
+                .addHeader("token", tok)
+                .addHeader("usuario", usr)
+                .addHeader("empresa", emp)
+                .build()
+
+            rawHttpClient.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) error("HTTP ${resp.code}")
+                val raw = resp.body?.string() ?: error("Corpo vazio")
+                val clean = raw.removePrefix("\uFEFF").trim()
+                JsonParser.parseString(clean).asJsonObject
+            }
         }
     }
-}
+*/

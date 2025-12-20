@@ -9,7 +9,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import com.helptech.abraham.Env
-import com.helptech.abraham.integracao.IntegracaoService
 import com.helptech.abraham.integracao.getAndroidId
 import com.helptech.abraham.settings.AppSettings
 import com.helptech.abraham.settings.DeviceRole
@@ -22,10 +21,7 @@ fun SetupScreen(
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    var empresa by remember { mutableStateOf(TextFieldValue("")) }
-    var nomeDisp by remember { mutableStateOf(TextFieldValue("POS")) }
-
-    // Serial mostrado na tela e usado na API
+    // Serial mostrado na tela
     var serial by remember { mutableStateOf("") }
 
     // Carrega o serial ao abrir a tela
@@ -41,16 +37,8 @@ fun SetupScreen(
     var loading by remember { mutableStateOf(false) }
     var msg by remember { mutableStateOf<String?>(null) }
 
-    fun autenticar() {
-        // Garante que sempre temos um serial válido
-        val serialParaAuth = if (serial.isNotBlank()) {
-            serial
-        } else {
-            val forced = Env.DEV_FORCE_SERIAL
-            if (!forced.isNullOrBlank()) forced else getAndroidId(ctx)
-        }
-
-        if (serialParaAuth.isBlank()) {
+    fun saveConfiguration() {
+        val serialParaSalvar = serial.ifBlank {
             msg = "Não foi possível obter o serial do dispositivo."
             return
         }
@@ -60,38 +48,15 @@ fun SetupScreen(
 
         scope.launch {
             try {
-                val resp = IntegracaoService.authDevice(
-                    serialNumber = serialParaAuth,
-                    nome = nomeDisp.text.ifBlank { "POS" }
-                )
-
-                if (!resp.sucesso) {
-                    msg = resp.mensagem ?: "Equipamento não habilitado."
-                    loading = false
-                    return@launch
-                }
-
-                // Empresa final: prioriza o que veio da API > digitado > default
-                val empresaFinal = (resp.empresa
-                    ?: empresa.text.ifBlank { Env.DEFAULT_EMPRESA }
-                        ).lowercase()
-
                 // Persiste no DataStore
-                AppSettings.saveEmpresa(ctx, empresaFinal)
-                resp.token?.let { AppSettings.saveApiToken(ctx, it) }
-                AppSettings.saveDeviceSerial(ctx, serialParaAuth)
-
-                // Preenche variáveis de runtime
-                Env.RUNTIME_EMPRESA = empresaFinal
-                Env.RUNTIME_USUARIO = resp.usuario ?: ""
-                Env.RUNTIME_TOKEN   = resp.token ?: ""
-
+                AppSettings.saveDeviceSerial(ctx, serialParaSalvar)
                 // Papel padrão
                 AppSettings.setRole(ctx, DeviceRole.BALCAO)
 
+                // Sinaliza que a configuração foi concluída
                 onConfigured()
             } catch (t: Throwable) {
-                msg = "Falha ao autenticar: ${t.message}"
+                msg = "Falha ao salvar a configuração: ${t.message}"
             } finally {
                 loading = false
             }
@@ -115,29 +80,15 @@ fun SetupScreen(
                     style = MaterialTheme.typography.titleLarge
                 )
 
-                OutlinedTextField(
-                    value = empresa,
-                    onValueChange = { empresa = it },
-                    label = { Text("Empresa (tenant)") },
-                    singleLine = true
-                )
-
-                OutlinedTextField(
-                    value = nomeDisp,
-                    onValueChange = { nomeDisp = it },
-                    label = { Text("Nome do dispositivo") },
-                    singleLine = true
-                )
-
                 // Campo somente leitura com o serial
                 OutlinedTextField(
                     value = TextFieldValue(serial),
                     onValueChange = { },
-                    enabled = false,
-                    label = { Text("Serial (ANDROID_ID)") },
+                    readOnly = true,
+                    label = { Text("Serial do Dispositivo (ID)") },
                     singleLine = true,
                     colors = OutlinedTextFieldDefaults.colors(
-                        disabledTextColor = MaterialTheme.colorScheme.onSurface
+                        disabledTextColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f)
                     )
                 )
 
@@ -150,7 +101,7 @@ fun SetupScreen(
                 }
 
                 Button(
-                    onClick = { autenticar() },
+                    onClick = { saveConfiguration() },
                     enabled = !loading
                 ) {
                     if (loading) {
@@ -160,7 +111,7 @@ fun SetupScreen(
                         )
                         Spacer(Modifier.width(8.dp))
                     }
-                    Text("Autenticar")
+                    Text("Salvar e Continuar")
                 }
             }
         }

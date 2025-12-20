@@ -36,6 +36,8 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.pointerInput
 
 
 
@@ -147,12 +149,20 @@ fun ProductDetailSheet(
         )
     }
 
+    val focusManager = LocalFocusManager.current
+
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false, dismissOnBackPress = true, dismissOnClickOutside = true)
     ) {
         Surface(
-            modifier = Modifier.fillMaxSize().navigationBarsPadding().imePadding(),
+            modifier = Modifier
+                .fillMaxSize()
+                .navigationBarsPadding()
+                .imePadding()
+                .pointerInput(Unit) {
+                    detectTapGestures(onTap = { focusManager.clearFocus() })
+                },
             color = SheetBg,
             contentColor = Color(0xFF111111),
         ) {
@@ -404,24 +414,24 @@ fun QuantidadeEtapa(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(100.dp),
-            // ENTER do teclado vira ação "Concluído"
             keyboardOptions = KeyboardOptions.Default.copy(
                 imeAction = ImeAction.Done
             ),
             keyboardActions = KeyboardActions(
-                onDone = {
-                    // fecha o teclado
-                    focusManager.clearFocus()
-                }
+                onDone = { focusManager.clearFocus() }
             ),
-            // continua multi-linha, só limitando um pouco
             maxLines = 4,
             trailingIcon = {
-                IconButton(onClick = { focusManager.clearFocus() }) {
-                    Icon(
-                        imageVector = Icons.Default.Close,
-                        contentDescription = "Fechar teclado"
-                    )
+                if (observacao.isNotEmpty()) { // Mostra o X apenas se houver texto
+                    IconButton(onClick = {
+                        onObservacao("") // Limpa o texto
+                        focusManager.clearFocus() // E fecha o teclado
+                    }) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Limpar e fechar teclado"
+                        )
+                    }
                 }
             }
         )

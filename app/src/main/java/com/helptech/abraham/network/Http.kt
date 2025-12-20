@@ -1,6 +1,7 @@
 package com.helptech.abraham.network
 
 import com.helptech.abraham.BuildConfig
+import com.helptech.abraham.integracao.AuthHeadersInterceptor
 import com.helptech.abraham.integracao.EmpresaParamInterceptor
 import okhttp3.Interceptor
 import okhttp3.OkHttpClient
@@ -17,10 +18,9 @@ import javax.net.ssl.HostnameVerifier
 import javax.net.ssl.SSLContext
 import javax.net.ssl.TrustManager
 import javax.net.ssl.X509TrustManager
+import com.google.gson.GsonBuilder
 
-/**
- * Remove BOM (\uFEFF) de respostas JSON/texto.
- */
+
 private class BomStrippingInterceptor : Interceptor {
     override fun intercept(chain: Interceptor.Chain): Response {
         val response = chain.proceed(chain.request())
@@ -34,71 +34,19 @@ private class BomStrippingInterceptor : Interceptor {
 
 object Http {
 
-    // ⚠️ FLAG PROVISÓRIA: deixar true para o PILOTO.
-    // Quando o certificado estiver OK, volte para false ou remova o unsafe.
     private const val INSECURE_SSL_FOR_PILOT = true
 
-    /**
-     * Cria um OkHttpClient "normal" com todos os interceptors do app.
-     */
-    private fun baseClientBuilder(): OkHttpClient.Builder {
-        val log = HttpLoggingInterceptor().apply {
-            redactHeader("token")
-            level = if (BuildConfig.DEBUG) HttpLoggingInterceptor.Level.BODY
-            else HttpLoggingInterceptor.Level.BASIC
-        }
-
-        return OkHttpClient.Builder()
-            .connectTimeout(30, TimeUnit.SECONDS)
-            .readTimeout(60, TimeUnit.SECONDS)
-            .writeTimeout(60, TimeUnit.SECONDS)
-            // headers mínimos
-            .addInterceptor { chain ->
-                chain.proceed(
-                    chain.request().newBuilder()
-                        .header("Accept", "application/json")
-                        .header("Content-Type", "application/json")
-                        .header("Cache-Control", "no-cache")
-                        .build()
-                )
-            }
-            // base dinâmica (online/local)
-            .addInterceptor(BaseUrlInterceptor())
-            // headers de autenticação pós-authdevice
-            .addInterceptor(com.helptech.abraham.integracao.AuthHeadersInterceptor())
-            // garante ?empresa= consistente com o runtime
-            .addInterceptor(EmpresaParamInterceptor())
-            // remove BOM
-            .addInterceptor(BomStrippingInterceptor())
-            .addInterceptor(log)
-            // controla rajada de requests
-            .dispatcher(okhttp3.Dispatcher().apply {
-                maxRequests = 32
-                maxRequestsPerHost = 8
-            })
+    private val loggingInterceptor = HttpLoggingInterceptor().apply {
+        redactHeader("token")
+        level = if (BuildConfig.DEBUG) HttpLoggingInterceptor.Level.BODY
+        else HttpLoggingInterceptor.Level.BASIC
     }
 
-    /**
-     * Desativa validação de certificado/hostname.
-     * Use isso só enquanto o servidor não tiver certificado ok.
-     */
     private fun createUnsafeClient(builder: OkHttpClient.Builder): OkHttpClient {
         val trustAllCerts = arrayOf<TrustManager>(
             object : X509TrustManager {
-                override fun checkClientTrusted(
-                    chain: Array<X509Certificate>,
-                    authType: String
-                ) {
-                    // no-op
-                }
-
-                override fun checkServerTrusted(
-                    chain: Array<X509Certificate>,
-                    authType: String
-                ) {
-                    // no-op
-                }
-
+                override fun checkClientTrusted(chain: Array<X509Certificate>, authType: String) {}
+                override fun checkServerTrusted(chain: Array<X509Certificate>, authType: String) {}
                 override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
             }
         )
@@ -107,19 +55,53 @@ object Http {
             init(null, trustAllCerts, SecureRandom())
         }
 
-        val sslSocketFactory = sslContext.socketFactory
-        val trustManager = trustAllCerts[0] as X509TrustManager
-
         return builder
-            .sslSocketFactory(sslSocketFactory, trustManager)
+            .sslSocketFactory(sslContext.socketFactory, trustAllCerts[0] as X509TrustManager)
             .hostnameVerifier(HostnameVerifier { _, _ -> true })
             .build()
+    }
+
+    // --- Client para AUTHDEVICE (sem interceptors de sessão) ---
+    private fun baseAuthClientBuilder(): OkHttpClient.Builder {
+        return OkHttpClient.Builder()
+            .connectTimeout(30, TimeUnit.SECONDS)
+            .readTimeout(60, TimeUnit.SECONDS)
+            .addInterceptor { chain ->
+                chain.proceed(
+                    chain.request().newBuilder()
+                        .header("Accept", "application/json")
+                        .header("Content-Type", "application/json")
+                        .build()
+                )
+            }
+            .addInterceptor(BaseUrlInterceptor())
+            .addInterceptor(loggingInterceptor)
+    }
+
+    val authClient: OkHttpClient by lazy {
+        val builder = baseAuthClientBuilder()
+        if (INSECURE_SSL_FOR_PILOT) {
+            createUnsafeClient(builder)
+        } else {
+            builder.build()
+        }
+    }
+
+    // --- Client PADRÃO (com interceptors de sessão) ---
+    private fun baseClientBuilder(): OkHttpClient.Builder {
+        return baseAuthClientBuilder() // Começa com o builder de auth
+            .addInterceptor(AuthHeadersInterceptor()) // Adiciona headers de sessão
+            .addInterceptor(EmpresaParamInterceptor()) // Adiciona ?empresa= a todas as chamadas
+            .addInterceptor(BomStrippingInterceptor())
+            .dispatcher(okhttp3.Dispatcher().apply {
+                maxRequests = 32
+                maxRequestsPerHost = 8
+            })
     }
 
     val client: OkHttpClient by lazy {
         val builder = baseClientBuilder()
         if (INSECURE_SSL_FOR_PILOT) {
-            // TODO: remover assim que o certificado do painel estiver OK
             createUnsafeClient(builder)
         } else {
             builder.build()
@@ -131,9 +113,8 @@ object Http {
         Retrofit.Builder()
             .baseUrl(base)
             .client(client)
-            // Scalars antes de Gson
             .addConverterFactory(ScalarsConverterFactory.create())
-            .addConverterFactory(GsonConverterFactory.create())
+            .addConverterFactory(GsonConverterFactory.create(GsonBuilder().setLenient().serializeNulls().create()))
             .build()
     }
 }

@@ -1,8 +1,7 @@
 package com.helptech.abraham
 
 /**
- * Centraliza variáveis de ambiente/config e valores de runtime
- * (preenchidos após o authdevice).
+ * Centraliza variáveis de ambiente/config e valores de runtime.
  */
 object Env {
     /** Base URL lida do BuildConfig (gradle). */
@@ -13,23 +12,25 @@ object Env {
     val DEFAULT_EMPRESA: String
         get() = BuildConfig.DEFAULT_EMPRESA
 
-    /**
-     * Token de vendor para o endpoint authdevice.
-     * Se o seu for outro, troque aqui (ex.: "MIT").
-     */
-    const val AUTHDEVICE_TOKEN: String = "MIT"
+    // --- Contexto Master para a chamada inicial authdevice ---
+    // Estes valores são usados para obter o token específico do device.
+    const val MASTER_EMPRESA: String = "mit"
+    const val MASTER_USUARIO: String = "marchioreit"
+    const val MASTER_TOKEN: String = "1697425409689f9ccda794d9.81360355"
 
     /**
      * Útil no emulador: force um serial específico.
      * Deixe null para usar o ANDROID_ID real.
-     *ccb98bfb83cf9ddf               POSA7DCVAD987AS*/
+     * ccb98bfb83cf9ddf (Yinki)
+     * eveerton (MIT)
+     */
     val DEV_FORCE_SERIAL: String? = "ccb98bfb83cf9ddf"
 
-    // === Preenchidos em runtime após o authdevice ===
+    // === Preenchidos em runtime após o sucesso do authdevice ===
     @Volatile var RUNTIME_EMPRESA: String = ""
     @Volatile var RUNTIME_USUARIO: String = ""
     @Volatile var RUNTIME_TOKEN:   String = ""
 
-    // === NOVO: base URL dinâmica (online x local) preenchida ao iniciar/apply settings ===
+    // === Base URL dinâmica (online x local) preenchida na inicialização ===
     @Volatile var RUNTIME_BASE_URL: String? = null
 }

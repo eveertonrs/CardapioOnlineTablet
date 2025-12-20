@@ -1,34 +1,36 @@
-// AuthBootstrapper.kt
 package com.helptech.abraham.integracao
 
 import android.content.Context
-import android.provider.Settings   // <- add isso
+import android.provider.Settings
 import com.helptech.abraham.Env
 import com.helptech.abraham.settings.AppSettings
 
 object AuthBootstrapper {
     suspend fun ensureAuth(context: Context, serialOverride: String? = Env.DEV_FORCE_SERIAL) {
         val serial: String = serialOverride
-            ?: Settings.Secure.getString(   // <- sem helper
-                context.contentResolver,
-                Settings.Secure.ANDROID_ID
-            )
+            ?.takeIf { it.isNotBlank() }
+            ?: Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID)
             ?: error("Não foi possível obter o ANDROID_ID")
 
-        val resp = IntegracaoService.authDevice(
-            serialNumber = serial,
-            nome = Env.AUTHDEVICE_TOKEN
-        )
+        val resp = IntegracaoService.authDevice(serialNumber = serial)
 
         if (!resp.sucesso) error(resp.mensagem ?: "Falha no authdevice")
 
-        Env.RUNTIME_EMPRESA = resp.empresa.orEmpty()
-        Env.RUNTIME_USUARIO = resp.usuario.orEmpty()
-        Env.RUNTIME_TOKEN   = resp.token.orEmpty()
+        val empresa = resp.empresa?.trim().orEmpty()
+        val usuario = resp.usuario?.trim().orEmpty()
+        val token   = resp.token?.trim().orEmpty()
 
-        AppSettings.saveEmpresa(context, Env.RUNTIME_EMPRESA)
-        AppSettings.saveUsuario(context, Env.RUNTIME_USUARIO)
-        AppSettings.saveApiToken(context, Env.RUNTIME_TOKEN)
+        if (empresa.isBlank() || token.isBlank()) {
+            error("Authdevice retornou dados incompletos (empresa/token).")
+        }
+
+        Env.RUNTIME_EMPRESA = empresa
+        Env.RUNTIME_USUARIO = usuario
+        Env.RUNTIME_TOKEN   = token
+
+        AppSettings.saveEmpresa(context, empresa)
+        AppSettings.saveUsuario(context, usuario)
+        AppSettings.saveApiToken(context, token)
         AppSettings.saveDeviceSerial(context, serial)
     }
 }

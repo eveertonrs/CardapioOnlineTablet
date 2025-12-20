@@ -3,6 +3,7 @@ package com.helptech.abraham.data.remote
 import com.google.gson.JsonElement
 import java.math.BigDecimal
 import java.math.RoundingMode
+import com.helptech.abraham.Env
 
 /**
  * Item mínimo para envio (código, quantidade, valor unit).
@@ -150,7 +151,7 @@ suspend fun enviarPedido(
     )
 
     val env = AkitemClient.api.call(
-        empresa = null,
+        empresa = Env.RUNTIME_EMPRESA,
         modulo  = "pedido",
         funcao  = "gravarPedido",
         body    = body

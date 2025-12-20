@@ -14,6 +14,10 @@ class EmpresaParamInterceptor : Interceptor {
                 url.encodedPath.endsWith("integracao.php")
         if (!isIntegracao) return chain.proceed(req)
 
+        // Se for authdevice, não injeta empresa
+        val isAuthDevice = req.header("funcao")?.equals("authdevice", ignoreCase = true) == true
+        if (isAuthDevice) return chain.proceed(req)
+
         // 1) valor obtido após o authdevice
         val empresaRuntime = Env.RUNTIME_EMPRESA.trim()
         // 2) valor de build

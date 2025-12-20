@@ -579,8 +579,12 @@ fun ApiPlayground() {
     val deviceSerial by AppSettings.observeDeviceSerial(ctx).collectAsState(initial = "")
     val mesaLabel = if (role == DeviceRole.BALCAO) "BALCÃO" else "MESA $tableNumber"
 
-    val empresa = BuildConfig.API_EMPRESA.uppercase()
-    val headerLabel = "$empresa · $mesaLabel"
+    val empresaRaw by AppSettings.observeEmpresa(ctx).collectAsState(initial = null)
+    val empresa = empresaRaw.orEmpty()
+
+    val empresaLabel = if (empresa.isBlank()) "—" else empresa.uppercase()
+    val headerLabel = "$empresaLabel · $mesaLabel"
+
 
     var produtos by remember { mutableStateOf<List<ProdutoDto>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
@@ -611,7 +615,14 @@ fun ApiPlayground() {
     val prettyGson: Gson = remember { GsonBuilder().setPrettyPrinting().create() }
 
     // Carrega produtos
-    LaunchedEffect(reloadKey) {
+    LaunchedEffect(reloadKey, empresa) {
+        // ✅ se ainda não tem empresa (authdevice não salvou), não chama API
+        if (empresa.isBlank()) {
+            loading = false
+            error = "Empresa não configurada (authdevice não retornou empresa)."
+            return@LaunchedEffect
+        }
+
         val body = mapOf(
             "item_adicional" to "",
             "n_categoria_codigo" to "",
@@ -625,7 +636,7 @@ fun ApiPlayground() {
         val env: ApiEnvelope = runCatching {
             withContext(Dispatchers.IO) {
                 AkitemClient.api.call(
-                    empresa = null,
+                    empresa = empresa,
                     modulo = "produto",
                     funcao = "consultar",
                     body = body
@@ -649,6 +660,7 @@ fun ApiPlayground() {
         produtos = todos
         loading = false
     }
+
 
     Box(
         modifier = Modifier
