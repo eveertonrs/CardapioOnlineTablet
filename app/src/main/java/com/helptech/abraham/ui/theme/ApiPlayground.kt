@@ -27,6 +27,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.outlined.ShoppingCart
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -61,9 +62,15 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -172,14 +179,18 @@ private fun CartPage(
     onObsChange: (String) -> Unit
 ) {
     val total = itens.sumOf { lineTotal(it) }
+    val focusManager = LocalFocusManager.current
 
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(PanelBg),
+            .background(PanelBg)
+            // Fecha teclado ao clicar fora
+            .pointerInput(Unit) {
+                detectTapGestures(onTap = { focusManager.clearFocus() })
+            },
         contentAlignment = Alignment.TopCenter
     ) {
-        // coluna centralizada com largura máxima — fica ótimo em tablet
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -202,7 +213,7 @@ private fun CartPage(
                     onClick = onBack,
                     modifier = Modifier
                         .height(44.dp)
-                        .widthIn(min = 220.dp),               // garante largura boa
+                        .widthIn(min = 220.dp),
                     shape = MaterialTheme.shapes.large,
                     colors = ButtonDefaults.buttonColors(
                         containerColor = Orange,
@@ -230,7 +241,6 @@ private fun CartPage(
             Divider(color = DividerClr)
 
             if (itens.isEmpty()) {
-                // --- Carrinho Vazio ---
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
@@ -258,7 +268,6 @@ private fun CartPage(
                     )
                 }
             } else {
-                // --- Lista de Itens ---
                 LazyColumn(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -275,7 +284,6 @@ private fun CartPage(
                     }
                 }
 
-                // --- Observações e Total ---
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -307,7 +315,28 @@ private fun CartPage(
                             focusedContainerColor = CardBg,
                             unfocusedContainerColor = CardBg
                         ),
-                        shape = MaterialTheme.shapes.large
+                        shape = MaterialTheme.shapes.large,
+                        // Fechar com "Enter"
+                        keyboardOptions = KeyboardOptions.Default.copy(
+                            imeAction = ImeAction.Done
+                        ),
+                        keyboardActions = KeyboardActions(
+                            onDone = { focusManager.clearFocus() }
+                        ),
+                        trailingIcon = {
+                            if (obsText.isNotEmpty()) {
+                                IconButton(onClick = {
+                                    onObsChange("")
+                                    focusManager.clearFocus()
+                                }) {
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = "Limpar e fechar teclado",
+                                        tint = Muted
+                                    )
+                                }
+                            }
+                        }
                     )
 
                     Spacer(Modifier.height(16.dp))
@@ -378,7 +407,6 @@ private fun CartItemRow(
                 .padding(12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // --- Imagem ---
             Box(
                 modifier = Modifier
                     .size(80.dp)
@@ -386,20 +414,17 @@ private fun CartItemRow(
                     .background(CardAltBg),
                 contentAlignment = Alignment.Center
             ) {
-                // 1) tenta buscar a foto principal pela API
                 var url by remember(produto.codigo) { mutableStateOf<String?>(null) }
                 LaunchedEffect(produto.codigo) {
                     url = try { buscarFotoPrincipal(produto.codigo) } catch (_: Exception) { null }
                 }
 
-                // 2) foto original do produto (URL ou base64)
                 val f = produto.foto
                 val isUrlOrig = !f.isNullOrBlank() &&
                         (f.startsWith("http", ignoreCase = true) ||
                                 f.startsWith("https", ignoreCase = true))
 
                 when {
-                    // Prioridade 1: URL vinda da API de imagens
                     !url.isNullOrBlank() -> {
                         AsyncImage(
                             model = url,
@@ -408,7 +433,6 @@ private fun CartItemRow(
                             contentScale = ContentScale.Crop
                         )
                     }
-                    // Prioridade 2: URL que já veio em produto.foto
                     isUrlOrig -> {
                         AsyncImage(
                             model = f,
@@ -417,7 +441,6 @@ private fun CartItemRow(
                             contentScale = ContentScale.Crop
                         )
                     }
-                    // Prioridade 3: base64 em produto.foto
                     !f.isNullOrBlank() -> {
                         val bmp = base64ToImageBitmapOrNull(f)
                         if (bmp != null) {
@@ -436,7 +459,6 @@ private fun CartItemRow(
                             )
                         }
                     }
-                    // Fallback final: ícone
                     else -> {
                         Icon(
                             imageVector = Icons.Outlined.ShoppingCart,
@@ -450,7 +472,6 @@ private fun CartItemRow(
 
             Spacer(Modifier.width(12.dp))
 
-            // --- Detalhes (Nome e Adicionais) ---
             Column(
                 modifier = Modifier.weight(1f)
             ) {
@@ -489,7 +510,6 @@ private fun CartItemRow(
 
             Spacer(Modifier.width(12.dp))
 
-            // --- Preço e Stepper ---
             Column(
                 horizontalAlignment = Alignment.End,
                 verticalArrangement = Arrangement.SpaceBetween
@@ -553,10 +573,8 @@ private fun formatMoneyLocal(valor: Double?): String {
         .replace('X', '.')
 }
 
-// Função normal, chamada de dentro do remember
 private fun base64ToImageBitmapOrNull(base64: String): androidx.compose.ui.graphics.ImageBitmap? {
     return runCatching {
-        // remove "data:image/xxx;base64," se vier
         val clean = base64.substringAfter(",", base64)
         val bytes = Base64.decode(clean, Base64.DEFAULT)
         val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
@@ -601,7 +619,7 @@ fun ApiPlayground() {
     val scope = rememberCoroutineScope()
     var submitting by remember { mutableStateOf(false) }
     var statusMsg by remember { mutableStateOf<String?>(null) }
-    var autoCloseSeconds by remember { mutableStateOf<Int?>(null) } // contador p/ garçom
+    var autoCloseSeconds by remember { mutableStateOf<Int?>(null) }
 
     var reloadKey by remember { mutableStateOf(0) }
 
@@ -614,9 +632,7 @@ fun ApiPlayground() {
     var myBillJson by remember { mutableStateOf<JsonObject?>(null) }
     val prettyGson: Gson = remember { GsonBuilder().setPrettyPrinting().create() }
 
-    // Carrega produtos
     LaunchedEffect(reloadKey, empresa) {
-        // ✅ se ainda não tem empresa (authdevice não salvou), não chama API
         if (empresa.isBlank()) {
             loading = false
             error = "Empresa não configurada (authdevice não retornou empresa)."
@@ -718,7 +734,6 @@ fun ApiPlayground() {
                             }
                             screen = Screen.CART
                         },
-                        // CHAMAR GARÇOM – mantém a mesma lógica que você já tinha
                         onCallWaiter = {
                             scope.launch {
                                 submitting = true
@@ -734,14 +749,10 @@ fun ApiPlayground() {
                                 submitting = false
                             }
                         },
-                        // MINHA CONTA – aqui você chama sua lógica de “minha conta”
                         onMyBill = {
                             scope.launch {
                                 submitting = true
-
-                                // Mesma regra antiga: BALCÃO ou número da mesa
                                 val contaStr = if (role == DeviceRole.BALCAO) "BALCÃO" else tableNumber.toString()
-
                                 val result = runCatching {
                                     IntegracaoService.consultarConsumoJson(contaStr)
                                 }.fold(
@@ -749,7 +760,7 @@ fun ApiPlayground() {
                                     onFailure = { e ->
                                         submitting = false
                                         statusMsg = "Não consegui consultar a conta: ${e.message ?: "verifique conexão/endpoint"}"
-                                        autoCloseSeconds = null // na tela de conta não auto-fecha
+                                        autoCloseSeconds = null
                                         return@launch
                                     }
                                 )
@@ -764,11 +775,9 @@ fun ApiPlayground() {
                                     statusMsg = "Não consegui consultar a conta: ${e.message ?: "verifique conexão/endpoint"}"
                                     autoCloseSeconds = null
                                 }
-
                                 submitting = false
                             }
                         },
-                        // DOUBLE CLICK / LONG PRESS NA MESA → abre o dialog de troca de mesa
                         onOpenMesaDialog = {
                             showMesaDialog = true
                         }
@@ -795,8 +804,6 @@ fun ApiPlayground() {
 
                             scope.launch {
                                 submitting = true
-
-                                // Monta itens da requisição normalmente
                                 val itensReq: List<ItemPedidoReq> = itens.map { ci ->
                                     ItemPedidoReq(
                                         codigoProduto = ci.produto.codigo,
@@ -815,7 +822,6 @@ fun ApiPlayground() {
                                     )
                                 }
 
-                                // 🔹 Protege contra qualquer exceção (ex: sem internet)
                                 val result: Result<JsonElement?> = try {
                                     enviarPedidoRemote(
                                         mesaLabel = mesaLabel,
@@ -850,15 +856,12 @@ fun ApiPlayground() {
                                         screen = Screen.MENU
                                     }
                                     .onFailure { e: Throwable ->
-                                        // 🔹 Mensagem amigável quando estiver sem rede / erro de comunicação
                                         statusMsg =
                                             "Não foi possível enviar o pedido.\n" +
                                                     "Verifique se o tablet está conectado à rede.\n\n" +
                                                     "Detalhe técnico: ${e.message ?: "erro de comunicação com o servidor."}"
-
                                         autoCloseSeconds = null
                                     }
-
                                 submitting = false
                             }
                         },
@@ -880,7 +883,6 @@ fun ApiPlayground() {
             }
         }
 
-        // Sheet de detalhe
         val produtoSheet = detalheProduto
         if (produtoSheet != null) {
             if (carregandoAdicionais) {
@@ -915,10 +917,7 @@ fun ApiPlayground() {
         }
     }
 
-    /* ---------- Status dialog (com auto-close opcional para Garçom) ---------- */
-    /* ---------- Status dialog (com auto-close opcional para Garçom) ---------- */
     if (statusMsg != null) {
-        // contador
         LaunchedEffect(statusMsg, autoCloseSeconds) {
             val start = autoCloseSeconds
             if (start != null && start > 0) {
@@ -944,16 +943,14 @@ fun ApiPlayground() {
             }
         )
     }
-    // Diálogo "Minha conta" — versão redesenhada
     myBillJson?.let { obj ->
         MyBillDialog(root = obj, onDismiss = { myBillJson = null })
     }
 
-    // Diálogo de troca/atualização de mesa
     if (showMesaDialog) {
         MesaOptionsDialog(
             currentTable = tableNumber,
-            deviceSerial = deviceSerial.orEmpty(),          // <<< NOVO
+            deviceSerial = deviceSerial.orEmpty(),
             onDismiss = { showMesaDialog = false },
             onConfirm = { novaMesa ->
                 scope.launch {
@@ -1027,7 +1024,6 @@ private fun MyBillDialog(root: JsonObject, onDismiss: () -> Unit) {
 
     val itens = root.get("Itens").asJsonArrayOrNull()
 
-    // FULL SCREEN
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
@@ -1035,14 +1031,13 @@ private fun MyBillDialog(root: JsonObject, onDismiss: () -> Unit) {
         Surface(
             modifier = Modifier.fillMaxSize(),
             color = Panel,
-            shape = RoundedCornerShape(0.dp) // era .none
+            shape = RoundedCornerShape(0.dp)
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(16.dp)
             ) {
-                // Top bar
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -1064,7 +1059,6 @@ private fun MyBillDialog(root: JsonObject, onDismiss: () -> Unit) {
                         .fillMaxWidth()
                         .weight(1f)
                 ) {
-                    // Cabeçalho (conta + cliente)
                     Surface(
                         color = Card,
                         shape = MaterialTheme.shapes.large,
@@ -1089,7 +1083,6 @@ private fun MyBillDialog(root: JsonObject, onDismiss: () -> Unit) {
 
                     Spacer(Modifier.height(12.dp))
 
-                    // Resumo
                     Surface(
                         color = Card,
                         shape = MaterialTheme.shapes.large,
@@ -1158,7 +1151,6 @@ private fun MyBillDialog(root: JsonObject, onDismiss: () -> Unit) {
                         }
                     }
 
-                    // Itens
                     if (itens != null && itens.size() > 0) {
                         Spacer(Modifier.height(12.dp))
                         Text(
@@ -1400,14 +1392,14 @@ private fun StatusDialog(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color(0x99000000)),   // fundo bem escuro
+                .background(Color(0x99000000)),
             contentAlignment = Alignment.Center
         ) {
             Surface(
                 shape = RoundedCornerShape(28.dp),
                 tonalElevation = 8.dp,
                 modifier = Modifier
-                    .fillMaxWidth(0.6f)           // ocupa boa parte da tela em tablet
+                    .fillMaxWidth(0.6f)
                     .padding(24.dp),
                 color = Color.White
             ) {
