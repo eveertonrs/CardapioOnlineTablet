@@ -16,7 +16,7 @@ import com.helptech.abraham.data.remote.ProdutoDto
  *
  * Formatos aceitos (vistos em ambientes diferentes):
  *  - produto.adicionais é List<GrupoAdicionalDto>
- *  - produto.adicionais é List<Map<String, *>> com chaves legadas: "grupo", "obrigatorio", "max", "opcoes"
+ *  - produto.adicionais é Map com "sucesso" contendo a lista (Padrão Akitem/Tolon)
  *  - produto.adicionais é Map com "grupos" ou "adicionais" contendo uma lista
  *  - produto.adicionais é JsonElement ou String com os formatos acima
  */
@@ -33,6 +33,10 @@ object AdicionaisRepo {
      * e, se conseguir, guarda em cache usando produto.codigo (Int).
      */
     fun fromProduto(produto: ProdutoDto): List<GrupoAdicionalDto> {
+        // 1) Verifica se já temos em cache (SSOT)
+        val emCache = cacheByProdutoCodigo[produto.codigo]
+        if (emCache != null && emCache.isNotEmpty()) return emCache
+
         val raw = produto.adicionais ?: return emptyList()
 
         val grupos: List<GrupoAdicionalDto> = try {
@@ -51,10 +55,9 @@ object AdicionaisRepo {
             emptyList()
         }
 
-        // Se deu certo, guarda no cache para uso offline
-        val codigo: Int? = produto.codigo
-        if (codigo != null && grupos.isNotEmpty()) {
-            cacheByProdutoCodigo[codigo] = grupos
+        // 2) Se deu certo, guarda no cache para uso offline
+        if (grupos.isNotEmpty()) {
+            cacheByProdutoCodigo[produto.codigo] = grupos
         }
 
         return grupos
@@ -86,37 +89,41 @@ object AdicionaisRepo {
     private fun parseJsonElement(el: JsonElement): List<GrupoAdicionalDto> {
         if (el.isJsonNull) return emptyList()
 
-        // 1) tenta direto como lista de GrupoAdicionalDto
-        val directList: List<GrupoAdicionalDto>? = runCatching {
-            val listType = object : TypeToken<List<GrupoAdicionalDto>>() {}.type
-            gson.fromJson<List<GrupoAdicionalDto>>(el, listType)
-        }.getOrNull()
-
-        if (directList != null) return directList
-
-        // 2) objeto: pode ter "grupos" ou "adicionais" ou vir num formato legado
+        // 1) Caso objeto: padrão Tolon/Akitem é { "sucesso": [ ... ] }
         if (el.isJsonObject) {
             val obj = el.asJsonObject
 
+            // Chave "sucesso" é a principal para listas aninhadas
+            if (obj.has("sucesso")) {
+                return parseJsonElement(obj.get("sucesso"))
+            }
             if (obj.has("grupos")) {
                 return parseJsonElement(obj.get("grupos"))
             }
+            // Evita loop se a chave for "adicionais" mas o valor for um objeto com "sucesso"
             if (obj.has("adicionais")) {
-                return parseJsonElement(obj.get("adicionais"))
+                val inner = obj.get("adicionais")
+                if (inner.isJsonArray) return parseJsonElement(inner)
+                if (inner.isJsonObject && inner.asJsonObject.has("sucesso")) {
+                    return parseJsonElement(inner.asJsonObject.get("sucesso"))
+                }
             }
 
             // formato legado: alguma chave com array de grupos
             return parseLegacyGroupsFromJsonObject(obj)
         }
 
-        // 3) array genérico
+        // 2) Caso Array: tenta converter direto para a lista
         if (el.isJsonArray) {
             val arr = el.asJsonArray
-            val anyList: List<Any> = gson.fromJson(
-                arr,
-                object : TypeToken<List<Any>>() {}.type
-            )
-            return parseListAny(anyList)
+            return try {
+                val listType = object : TypeToken<List<GrupoAdicionalDto>>() {}.type
+                gson.fromJson<List<GrupoAdicionalDto>>(arr, listType) ?: emptyList()
+            } catch (e: Exception) {
+                // Se falhar o parse direto (tipos incompatíveis), tenta parse manual item a item
+                val anyList: List<Any> = gson.fromJson(arr, object : TypeToken<List<Any>>() {}.type)
+                parseListAny(anyList)
+            }
         }
 
         return emptyList()
@@ -152,7 +159,6 @@ object AdicionaisRepo {
                         out += parseOneFromJsonElement(el, index)
                     }
                 }
-                // null ou outro tipo é ignorado
             }
         }
 
@@ -160,8 +166,9 @@ object AdicionaisRepo {
     }
 
     private fun parseMapAny(map: Map<*, *>): List<GrupoAdicionalDto> {
-        // Map pode ter "grupos" ou "adicionais" dentro
+        // Map pode ter "sucesso", "grupos" ou "adicionais" dentro
         val inner: Any? = when {
+            map.containsKey("sucesso")    -> map["sucesso"]
             map.containsKey("grupos")     -> map["grupos"]
             map.containsKey("adicionais") -> map["adicionais"]
             else -> null
@@ -182,7 +189,7 @@ object AdicionaisRepo {
             gson.fromJson(el, GrupoAdicionalDto::class.java)
         }.getOrNull()
 
-        if (direct != null) return direct
+        if (direct != null && direct.nome.isNotBlank()) return direct
 
         // Se for objeto, tenta como legado
         if (el.isJsonObject) {
